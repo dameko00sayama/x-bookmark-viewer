@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      X_CLIENT_ID: "${X_CLIENT_ID:-}"
+      X_CLIENT_SECRET: "${X_CLIENT_SECRET:-}"
+      APP_BASE_URL: "http://localhost:8080"
+      X_CALLBACK_URL: "http://localhost:8080/api/auth/callback/x"
+      TOKEN_ENCRYPTION_KEY: "${TOKEN_ENCRYPTION_KEY:-local-development-change-me}"
+      DATA_DIR: "/app/data"
+      PORT: "8080"
+    volumes:
+      - app-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  app-data:
