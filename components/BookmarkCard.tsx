@@ -1,7 +1,7 @@
 "use client";
 
 import type { BookmarkTweet } from "@/lib/x-api";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 type BookmarkCardProps = {
   tweet: BookmarkTweet;
@@ -62,6 +62,72 @@ function linkedText(text: string) {
   }
 
   return nodes;
+}
+
+type VideoMediaProps = {
+  media: BookmarkTweet["media"][number];
+};
+
+function proxiedVideoUrl(url: string | null) {
+  return url ? `/api/media/video?url=${encodeURIComponent(url)}` : undefined;
+}
+
+function VideoMedia({ media }: VideoMediaProps) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playError, setPlayError] = useState(false);
+
+  async function playVideo(event: React.MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation();
+    setPlayError(false);
+
+    try {
+      await videoRef.current?.play();
+    } catch {
+      setPlayError(true);
+    }
+  }
+
+  return (
+    <div className="relative overflow-hidden rounded-md border border-line bg-black" onClick={(event) => event.stopPropagation()}>
+      <video
+        ref={videoRef}
+        src={proxiedVideoUrl(media.videoUrl)}
+        poster={media.url}
+        controls
+        playsInline
+        preload="metadata"
+        loop={media.type === "animated_gif"}
+        muted={media.type === "animated_gif"}
+        className="h-48 w-full object-contain"
+        onClick={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => event.stopPropagation()}
+        onPlay={() => {
+          setIsPlaying(true);
+          setPlayError(false);
+        }}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => setIsPlaying(false)}
+      />
+      {!isPlaying ? (
+        <button
+          type="button"
+          aria-label="動画を再生"
+          className="absolute inset-0 flex items-center justify-center bg-black/20 text-white transition hover:bg-black/10"
+          onClick={playVideo}
+        >
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/70 pl-1 text-3xl shadow-lg ring-1 ring-white/25">
+            ▶
+          </span>
+        </button>
+      ) : null}
+      {playError ? (
+        <div className="absolute bottom-2 left-2 right-2 rounded bg-black/80 px-2 py-1 text-xs text-slate-100">
+          ブラウザで再生できません。右下のメニューから開くか、ポストを開いて確認してください。
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function BookmarkCard({ tweet, onRemove, onImageClick }: BookmarkCardProps) {
@@ -139,11 +205,19 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
       onClick={openTweet}
     >
       <div className="mb-3 flex items-start justify-between gap-4">
-        <div>
-          <div className="text-sm font-semibold text-white">{tweet.author?.name ?? "Unknown"}</div>
-          <div className="text-sm text-quiet">@{tweet.author?.username ?? tweet.author?.id ?? "unknown"}</div>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-white">
+            <span className="group cursor-pointer break-words transition hover:text-sky-300 hover:underline hover:decoration-sky-300/70 hover:underline-offset-2">
+              {tweet.author?.name ?? "Unknown"}{" "}
+              <span className="whitespace-nowrap text-quiet transition group-hover:text-sky-300">
+                (@{tweet.author?.username ?? tweet.author?.id ?? "unknown"})
+              </span>
+            </span>
+          </div>
         </div>
-        <time className="shrink-0 text-sm text-quiet">{formatDate(tweet.createdAt)}</time>
+        <time className="shrink-0 cursor-pointer text-sm text-quiet transition hover:text-sky-300 hover:underline hover:decoration-sky-300/70 hover:underline-offset-2">
+          {formatDate(tweet.createdAt)}
+        </time>
       </div>
 
       <div className="flex flex-col gap-2" onClick={(event) => event.stopPropagation()}>
@@ -205,24 +279,7 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
         <div className="mt-4 grid grid-cols-2 gap-3" onClick={(event) => event.stopPropagation()}>
           {localTweet.media.map((image) =>
             image.videoUrl ? (
-              <div
-                key={image.key}
-                className="overflow-hidden rounded-md border border-line bg-black"
-                onClick={(event) => event.stopPropagation()}
-                onDoubleClick={(event) => event.stopPropagation()}
-                onPointerDown={(event) => event.stopPropagation()}
-                onPointerUp={(event) => event.stopPropagation()}
-              >
-                <video
-                  src={image.videoUrl}
-                  poster={image.url}
-                  controls
-                  playsInline
-                  loop={image.type === "animated_gif"}
-                  muted={image.type === "animated_gif"}
-                  className="h-48 w-full object-cover"
-                />
-              </div>
+              <VideoMedia key={image.key} media={image} />
             ) : (
               <button
                 key={image.key}

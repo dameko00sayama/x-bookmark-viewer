@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.1 - 2026-05-27
+
+- Fix: Proxy X video media through `/api/media/video` so bookmark videos can play reliably.
+- Fix: Add an explicit video play overlay and playback error message in bookmark cards.
+
+## v1.1.0 - 2026-05-27
+
+- Feature: Display author handles inline as `Name (@handle)` in bookmark cards.
+- Feature: Add hover color and underline affordances to clickable author/date areas.
+
 ## v1.0.0 - 2026-05-27
 
 - Release: Promote the local X Bookmark Viewer workflow to v1.0.0.
