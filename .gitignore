@@ -293,6 +293,8 @@ node_modules/
 
 # Next.js
 .next/
+data/
+tsconfig.tsbuildinfo
 
 # Visual Studio 6 build log
 *.plg

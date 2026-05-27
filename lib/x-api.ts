@@ -37,6 +37,24 @@ type TokenResponse = {
 
 const X_API_BASE = "https://api.x.com";
 const SCOPES = ["tweet.read", "users.read", "bookmark.read", "bookmark.write", "offline.access"];
+const BOOKMARK_TWEET_FIELDS = [
+  "attachments",
+  "author_id",
+  "created_at",
+  "referenced_tweets",
+  "text",
+  "note_tweet"
+].join(",");
+const FULL_TWEET_FIELDS = [
+  "attachments",
+  "author_id",
+  "created_at",
+  "referenced_tweets",
+  "text",
+  "entities",
+  "conversation_id",
+  "note_tweet"
+].join(",");
 
 export function getScopes() {
   return SCOPES.join(" ");
@@ -265,7 +283,7 @@ export async function fetchBookmarks(paginationToken?: string | null): Promise<B
   const auth = await getValidAuth();
   const url = new URL(`${X_API_BASE}/2/users/${auth.userId}/bookmarks`);
   url.searchParams.set("max_results", "50");
-  url.searchParams.set("tweet.fields", "attachments,author_id,created_at,referenced_tweets,text");
+  url.searchParams.set("tweet.fields", BOOKMARK_TWEET_FIELDS);
   url.searchParams.set("user.fields", "name,username");
   url.searchParams.set("media.fields", "alt_text,preview_image_url,type,url");
   url.searchParams.set("expansions", "author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id");
@@ -283,10 +301,7 @@ export async function fetchBookmarks(paginationToken?: string | null): Promise<B
 export async function fetchTweet(tweetId: string, expandThread = false): Promise<BookmarkTweet> {
   const auth = await getValidAuth();
   const url = new URL(`${X_API_BASE}/2/tweets/${tweetId}`);
-  url.searchParams.set(
-    "tweet.fields",
-    "attachments,author_id,created_at,referenced_tweets,text,entities,conversation_id"
-  );
+  url.searchParams.set("tweet.fields", FULL_TWEET_FIELDS);
   url.searchParams.set("user.fields", "name,username");
   url.searchParams.set("media.fields", "alt_text,preview_image_url,type,url");
   url.searchParams.set(
@@ -317,10 +332,7 @@ export async function fetchTweet(tweetId: string, expandThread = false): Promise
       // search for other tweets in the same conversation by the same author
       sUrl.searchParams.set("query", `conversation_id:${convId} author_id:${authorId}`);
       sUrl.searchParams.set("max_results", "100");
-      sUrl.searchParams.set(
-        "tweet.fields",
-        "attachments,author_id,created_at,referenced_tweets,text,conversation_id"
-      );
+      sUrl.searchParams.set("tweet.fields", FULL_TWEET_FIELDS);
       sUrl.searchParams.set("expansions", "author_id,attachments.media_keys");
       sUrl.searchParams.set("user.fields", "name,username");
       sUrl.searchParams.set("media.fields", "alt_text,preview_image_url,type,url");
@@ -344,14 +356,13 @@ export async function fetchTweet(tweetId: string, expandThread = false): Promise
 
       if (sameAuthor.length > 0) {
         // assemble full text by joining texts (ensure original tweet first)
-        const parts = sameAuthor.map((t) => t.text ?? "");
         // If original tweet is included twice, dedupe by id
         const ids = new Set<string>();
         const orderedParts: string[] = [];
         for (const t of sameAuthor) {
           if (!ids.has(t.id)) {
             ids.add(t.id);
-            orderedParts.push(t.text ?? "");
+            orderedParts.push(getTweetText(t));
           }
         }
         tweet.text = orderedParts.join("\n\n");
@@ -394,6 +405,10 @@ export async function addBookmark(tweetId: string) {
   });
 }
 
+function getTweetText(tweet: any): string {
+  return tweet.note_tweet?.text ?? tweet.text ?? "";
+}
+
 function normalizeBookmarks(payload: any): BookmarkPage {
   const users = new Map<string, BookmarkAuthor>();
   const tweets = new Map<string, any>();
@@ -426,14 +441,14 @@ function normalizeBookmarks(payload: any): BookmarkPage {
 
     return {
       id: tweet.id,
-      text: tweet.text ?? "",
+      text: getTweetText(tweet),
       createdAt: tweet.created_at ?? null,
       author: tweet.author_id ? users.get(tweet.author_id) ?? null : null,
       media: mediaKeys.map((key: string) => media.get(key)).filter(Boolean),
       quotedTweet: quoted
         ? {
             id: quoted.id,
-            text: quoted.text ?? "",
+            text: getTweetText(quoted),
             createdAt: quoted.created_at ?? null,
             author: quoted.author_id ? users.get(quoted.author_id) ?? null : null
           }

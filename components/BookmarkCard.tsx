@@ -31,6 +31,7 @@ function tweetUrl(tweet: BookmarkTweet | Omit<BookmarkTweet, "media" | "quotedTw
 export default function BookmarkCard({ tweet, onRemove, onImageClick }: BookmarkCardProps) {
   const [localTweet, setLocalTweet] = useState<BookmarkTweet>(tweet);
   const [trans, setTrans] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const [loadingFull, setLoadingFull] = useState(false);
   function isProbablyTruncated(text: string) {
     const t = (text ?? "").trim();
@@ -42,6 +43,8 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
   const openTweet = () => {
     window.open(tweetUrl(localTweet), "_blank", "noopener,noreferrer");
   };
+  const isTruncated = isProbablyTruncated(localTweet.text);
+  const previewText = isTruncated ? `${localTweet.text.slice(0, 140)}...` : localTweet.text;
 
   async function loadFull() {
     try {
@@ -90,16 +93,23 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
         <time className="shrink-0 text-sm text-quiet">{formatDate(tweet.createdAt)}</time>
       </div>
 
-      <details className="group" onClick={(event) => event.stopPropagation()}>
-        <summary className="list-none whitespace-pre-wrap leading-7 text-slate-100 group-open:hidden">
-          {isProbablyTruncated(localTweet.text) ? `${localTweet.text.slice(0, 140)}...` : localTweet.text}
-          {isProbablyTruncated(localTweet.text) ? (
-            <span className="ml-2 text-sm font-semibold text-slate-300">続きを読む</span>
-          ) : null}
-        </summary>
-        <div className="flex flex-col gap-2">
-          <p className="whitespace-pre-wrap leading-7 text-slate-100">{localTweet.text}</p>
-          <div className="flex gap-2">
+      <div className="flex flex-col gap-2" onClick={(event) => event.stopPropagation()}>
+        <p className="whitespace-pre-wrap leading-7 text-slate-100">
+          {expanded ? localTweet.text : previewText}
+        </p>
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            className="text-sm font-semibold text-slate-300 underline"
+            onClick={(e) => {
+              e.stopPropagation();
+              setExpanded((current) => !current);
+            }}
+          >
+            {expanded ? "閉じる" : isTruncated ? "続きを読む" : "開く"}
+          </button>
+          {expanded ? (
+            <>
             <button
               type="button"
               className="text-sm text-slate-300 underline"
@@ -121,10 +131,11 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
             >
               翻訳
             </button>
-          </div>
-          {trans ? <div className="mt-2 whitespace-pre-wrap text-sm text-slate-300">{trans}</div> : null}
+            </>
+          ) : null}
         </div>
-      </details>
+        {expanded && trans ? <div className="mt-2 whitespace-pre-wrap text-sm text-slate-300">{trans}</div> : null}
+      </div>
 
       {localTweet.media.length > 0 ? (
         <div className="mt-4 grid grid-cols-2 gap-3" onClick={(event) => event.stopPropagation()}>
