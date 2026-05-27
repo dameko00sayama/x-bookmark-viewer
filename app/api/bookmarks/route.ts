@@ -1,15 +1,79 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AuthRequiredError, fetchBookmarks, XApiError } from "@/lib/x-api";
+import {
+  getCachedBookmarkCount,
+  getCachedBookmarkPage,
+  getAuth,
+  getMonthlyEstimatedApiCost,
+  getSetting,
+  saveCachedBookmarkPage
+} from "@/lib/db";
+import { AuthRequiredError, BudgetExceededError, fetchBookmarks, XApiError } from "@/lib/x-api";
+
+const PAGE_SIZE = 50;
+
+function encodeXToken(token: string | null) {
+  return token ? `x:${encodeURIComponent(token)}` : null;
+}
+
+function nextTokenAfterCache(offset: number, itemCount: number) {
+  const total = getCachedBookmarkCount();
+  if (offset + itemCount < total) {
+    return `cache:${offset + itemCount}`;
+  }
+
+  return encodeXToken(getSetting("bookmarks_next_x_token"));
+}
+
+async function fetchAndCacheXPage(paginationToken: string | null, offset: number) {
+  const page = await fetchBookmarks(paginationToken);
+  saveCachedBookmarkPage(page.items, offset, page.nextToken);
+
+  return {
+    items: page.items,
+    nextToken: nextTokenAfterCache(offset, page.items.length),
+    source: "x",
+    estimatedMonthlyCostUsd: getMonthlyEstimatedApiCost()
+  };
+}
 
 export async function GET(request: NextRequest) {
-  const token = new URL(request.url).searchParams.get("pagination_token");
+  const params = new URL(request.url).searchParams;
+  const token = params.get("pagination_token");
+  const refresh = params.get("refresh") === "1";
 
   try {
-    const page = await fetchBookmarks(token);
-    return NextResponse.json(page);
+    if (!getAuth()) {
+      throw new AuthRequiredError();
+    }
+
+    if (refresh) {
+      const response = await fetchAndCacheXPage(null, 0);
+      return NextResponse.json(response);
+    }
+
+    if (token?.startsWith("x:")) {
+      const xToken = decodeURIComponent(token.slice(2));
+      const response = await fetchAndCacheXPage(xToken, getCachedBookmarkCount());
+      return NextResponse.json(response);
+    }
+
+    const offset = token?.startsWith("cache:") ? Number(token.slice(6)) : 0;
+    const cacheOffset = Number.isFinite(offset) && offset > 0 ? offset : 0;
+    const page = getCachedBookmarkPage(cacheOffset, PAGE_SIZE);
+
+    return NextResponse.json({
+      ...page,
+      nextToken: page.nextToken ?? encodeXToken(getSetting("bookmarks_next_x_token")),
+      source: "cache",
+      estimatedMonthlyCostUsd: getMonthlyEstimatedApiCost()
+    });
   } catch (error) {
     if (error instanceof AuthRequiredError) {
       return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    if (error instanceof BudgetExceededError) {
+      return NextResponse.json({ error: "BUDGET_EXCEEDED" }, { status: 402 });
     }
 
     if (error instanceof XApiError) {

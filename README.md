@@ -8,12 +8,42 @@ X/Twitterのブックマークだけを表示する、個人用ローカルWeb�
 
 - X OAuth 2.0 PKCEでログイン
 - ブックマーク済みポストを50件ずつ表示
-- 「もっと読む」ボタンで明示的に追加取得
+- SQLiteキャッシュからブックマーク済みポストを表示
+- 「更新」ボタンで明示的にX APIから最新ページを取得
+- 「もっと読む」ボタンでキャッシュ済みページを優先表示し、足りない場合だけ追加取得
+- ポスト本文内のURLをリンクとして表示
 - 画像をアプリ内モーダルで表示
 - ブックマーク解除
 - 解除直後のUndo
+- X APIの月次概算利用額を表示
 
-投稿本文、投稿一覧、投稿者情報、メディア情報、ブックマーク全量データはSQLiteに保存しません。永続保存するのは暗号化したOAuthトークン、ユーザーID、設定用の最低限の領域だけです。
+## ローカル保存するデータ
+
+X APIの利用額を抑えるため、取得済みのブックマーク済みポストはSQLiteにキャッシュします。
+
+SQLiteに保存するもの:
+
+- 暗号化したOAuthトークン
+- ユーザーID
+- OAuth state
+- 設定値
+- 取得済みブックマーク済みポストの本文
+- 投稿者情報
+- メディアURLとalt text
+- 引用ポスト情報
+- X API利用額の概算記録
+
+SQLiteに保存しないもの:
+
+- Xのパスワード
+- DM
+- 通知
+- タイムライン
+- 検索結果
+- いいね一覧
+- リポスト一覧
+
+初回表示はローカルキャッシュを読みます。X APIを叩くのは、主に「更新」、キャッシュが尽きた後の「もっと読む」、「全文取得」、「スレッド取得」、ブックマーク解除/Undoです。
 
 ## 初回セットアップ
 
@@ -32,9 +62,11 @@ X_CALLBACK_URL=http://localhost:8080/api/auth/callback/x
 APP_BASE_URL=http://localhost:8080
 TOKEN_ENCRYPTION_KEY=replace-with-a-long-random-secret
 DATA_DIR=/app/data
+MONTHLY_X_API_BUDGET_USD=3
 ```
 
 `TOKEN_ENCRYPTION_KEY` は十分に長いランダム文字列、または32バイトのbase64文字列を指定してください。変更すると保存済みトークンを復号できなくなります。
+`MONTHLY_X_API_BUDGET_USD` はX APIの月次概算予算です。未設定の場合は `3` として扱います。
 
 `.env` を作成・変更した後は、コンテナを再作成してください。
 
@@ -71,7 +103,7 @@ http://localhost:8080
 docker compose down
 ```
 
-トークンDBを含むDocker volumeも削除する場合:
+トークン、設定、ポストキャッシュ、API利用額記録を含むDocker volumeも削除する場合:
 
 ```bash
 docker compose down -v

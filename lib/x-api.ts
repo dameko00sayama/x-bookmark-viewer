@@ -1,10 +1,17 @@
 import { createHash } from "crypto";
-import { getAuth, saveAuth, type StoredAuth } from "./db";
+import {
+  getAuth,
+  getMonthlyEstimatedApiCost,
+  recordApiUsageForResources,
+  saveAuth,
+  type StoredAuth
+} from "./db";
 
 export type BookmarkMedia = {
   key: string;
   type: string;
   url: string;
+  videoUrl: string | null;
   altText: string | null;
 };
 
@@ -14,13 +21,21 @@ export type BookmarkAuthor = {
   username: string;
 };
 
+export type QuotedBookmarkTweet = {
+  id: string;
+  text: string;
+  createdAt: string | null;
+  author: BookmarkAuthor | null;
+};
+
 export type BookmarkTweet = {
   id: string;
   text: string;
   createdAt: string | null;
   author: BookmarkAuthor | null;
   media: BookmarkMedia[];
-  quotedTweet: Omit<BookmarkTweet, "media" | "quotedTweet"> | null;
+  note: string | null;
+  quotedTweet: QuotedBookmarkTweet | null;
 };
 
 export type BookmarkPage = {
@@ -37,6 +52,7 @@ type TokenResponse = {
 
 const X_API_BASE = "https://api.x.com";
 const SCOPES = ["tweet.read", "users.read", "bookmark.read", "bookmark.write", "offline.access"];
+const OWNED_READ_COST_USD = 0.001;
 const BOOKMARK_TWEET_FIELDS = [
   "attachments",
   "author_id",
@@ -55,6 +71,7 @@ const FULL_TWEET_FIELDS = [
   "conversation_id",
   "note_tweet"
 ].join(",");
+const MEDIA_FIELDS = "alt_text,duration_ms,preview_image_url,type,url,variants";
 
 export function getScopes() {
   return SCOPES.join(" ");
@@ -70,6 +87,17 @@ export function getRequiredEnv(name: string) {
 
 export function createCodeChallenge(verifier: string) {
   return createHash("sha256").update(verifier).digest("base64url");
+}
+
+function getMonthlyBudgetUsd() {
+  const value = Number(process.env.MONTHLY_X_API_BUDGET_USD ?? "3");
+  return Number.isFinite(value) && value > 0 ? value : 3;
+}
+
+function assertWithinMonthlyBudget(estimatedCostUsd: number) {
+  if (getMonthlyEstimatedApiCost() + estimatedCostUsd > getMonthlyBudgetUsd()) {
+    throw new BudgetExceededError();
+  }
 }
 
 function getBaseUrl(defaultBaseUrl?: string) {
@@ -193,6 +221,13 @@ export class XApiError extends Error {
   }
 }
 
+export class BudgetExceededError extends Error {
+  constructor() {
+    super("Monthly X API budget would be exceeded");
+    this.name = "BudgetExceededError";
+  }
+}
+
 async function xFetch(path: string, init: RequestInit = {}) {
   const auth = await getValidAuth();
   const response = await fetch(`${X_API_BASE}${path}`, {
@@ -280,12 +315,13 @@ export async function fetchMe(accessToken: string): Promise<{ id: string; name: 
 }
 
 export async function fetchBookmarks(paginationToken?: string | null): Promise<BookmarkPage> {
+  assertWithinMonthlyBudget(50 * OWNED_READ_COST_USD);
   const auth = await getValidAuth();
   const url = new URL(`${X_API_BASE}/2/users/${auth.userId}/bookmarks`);
   url.searchParams.set("max_results", "50");
   url.searchParams.set("tweet.fields", BOOKMARK_TWEET_FIELDS);
   url.searchParams.set("user.fields", "name,username");
-  url.searchParams.set("media.fields", "alt_text,preview_image_url,type,url");
+  url.searchParams.set("media.fields", MEDIA_FIELDS);
   url.searchParams.set("expansions", "author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id");
 
   if (paginationToken) {
@@ -294,16 +330,19 @@ export async function fetchBookmarks(paginationToken?: string | null): Promise<B
 
   const response = await xFetch(`${url.pathname}${url.search}`);
   const payload = await response.json();
+  const resourceIds = Array.isArray(payload.data) ? payload.data.map((tweet: any) => tweet.id) : [];
+  recordApiUsageForResources("bookmarks", resourceIds, OWNED_READ_COST_USD);
 
   return normalizeBookmarks(payload);
 }
 
 export async function fetchTweet(tweetId: string, expandThread = false): Promise<BookmarkTweet> {
+  assertWithinMonthlyBudget((expandThread ? 101 : 1) * OWNED_READ_COST_USD);
   const auth = await getValidAuth();
   const url = new URL(`${X_API_BASE}/2/tweets/${tweetId}`);
   url.searchParams.set("tweet.fields", FULL_TWEET_FIELDS);
   url.searchParams.set("user.fields", "name,username");
-  url.searchParams.set("media.fields", "alt_text,preview_image_url,type,url");
+  url.searchParams.set("media.fields", MEDIA_FIELDS);
   url.searchParams.set(
     "expansions",
     "author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id"
@@ -311,6 +350,7 @@ export async function fetchTweet(tweetId: string, expandThread = false): Promise
 
   const response = await xFetch(`${url.pathname}${url.search}`);
   const payload = await response.json();
+  recordApiUsageForResources("tweet", payload.data?.id ? [payload.data.id] : [], OWNED_READ_COST_USD);
 
   // normalize initial tweet
   const norm = normalizeBookmarks({ data: [payload.data], includes: payload.includes ?? {} });
@@ -335,10 +375,12 @@ export async function fetchTweet(tweetId: string, expandThread = false): Promise
       sUrl.searchParams.set("tweet.fields", FULL_TWEET_FIELDS);
       sUrl.searchParams.set("expansions", "author_id,attachments.media_keys");
       sUrl.searchParams.set("user.fields", "name,username");
-      sUrl.searchParams.set("media.fields", "alt_text,preview_image_url,type,url");
+      sUrl.searchParams.set("media.fields", MEDIA_FIELDS);
 
       const sResp = await xFetch(`${sUrl.pathname}${sUrl.search}`);
       const sPayload = await sResp.json();
+      const searchResourceIds = Array.isArray(sPayload.data) ? sPayload.data.map((tweet: any) => tweet.id) : [];
+      recordApiUsageForResources("thread_search", searchResourceIds, OWNED_READ_COST_USD);
 
       // collect tweets from data + includes.tweets
       const tweets: any[] = [];
@@ -372,7 +414,13 @@ export async function fetchTweet(tweetId: string, expandThread = false): Promise
         for (const m of sPayload.includes?.media ?? []) {
           const url = m.url ?? m.preview_image_url;
           if (url) {
-            mediaMap.set(m.media_key, { key: m.media_key, type: m.type, url, altText: m.alt_text ?? null });
+            mediaMap.set(m.media_key, {
+              key: m.media_key,
+              type: m.type,
+              url,
+              videoUrl: getMediaVideoUrl(m),
+              altText: m.alt_text ?? null
+            });
           }
         }
 
@@ -409,6 +457,16 @@ function getTweetText(tweet: any): string {
   return tweet.note_tweet?.text ?? tweet.text ?? "";
 }
 
+function getMediaVideoUrl(media: any): string | null {
+  const variants = Array.isArray(media.variants) ? media.variants : [];
+  const mp4Variants = variants.filter(
+    (variant: any) => variant.content_type === "video/mp4" && typeof variant.url === "string"
+  );
+
+  const bestVariant = mp4Variants.sort((a: any, b: any) => (b.bit_rate ?? 0) - (a.bit_rate ?? 0))[0];
+  return bestVariant?.url ?? null;
+}
+
 function normalizeBookmarks(payload: any): BookmarkPage {
   const users = new Map<string, BookmarkAuthor>();
   const tweets = new Map<string, any>();
@@ -429,6 +487,7 @@ function normalizeBookmarks(payload: any): BookmarkPage {
         key: item.media_key,
         type: item.type,
         url,
+        videoUrl: getMediaVideoUrl(item),
         altText: item.alt_text ?? null
       });
     }
@@ -445,6 +504,7 @@ function normalizeBookmarks(payload: any): BookmarkPage {
       createdAt: tweet.created_at ?? null,
       author: tweet.author_id ? users.get(tweet.author_id) ?? null : null,
       media: mediaKeys.map((key: string) => media.get(key)).filter(Boolean),
+      note: null,
       quotedTweet: quoted
         ? {
             id: quoted.id,

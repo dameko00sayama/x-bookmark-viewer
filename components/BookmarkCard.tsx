@@ -23,15 +23,54 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
-function tweetUrl(tweet: BookmarkTweet | Omit<BookmarkTweet, "media" | "quotedTweet">) {
+function tweetUrl(tweet: Pick<BookmarkTweet, "id" | "author">) {
   const username = tweet.author?.username ?? "i";
   return `https://x.com/${username}/status/${tweet.id}`;
+}
+
+function linkedText(text: string) {
+  const urlPattern = /https?:\/\/[^\s<>"']+/g;
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(urlPattern)) {
+    const url = match[0];
+    const index = match.index ?? 0;
+
+    if (index > lastIndex) {
+      nodes.push(text.slice(lastIndex, index));
+    }
+
+    nodes.push(
+      <a
+        key={`${url}-${index}`}
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="break-all text-sky-300 underline decoration-sky-300/60 underline-offset-2 hover:text-sky-200"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {url}
+      </a>
+    );
+
+    lastIndex = index + url.length;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
 }
 
 export default function BookmarkCard({ tweet, onRemove, onImageClick }: BookmarkCardProps) {
   const [localTweet, setLocalTweet] = useState<BookmarkTweet>(tweet);
   const [trans, setTrans] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [note, setNote] = useState(tweet.note ?? "");
+  const [savingNote, setSavingNote] = useState(false);
   const [loadingFull, setLoadingFull] = useState(false);
   function isProbablyTruncated(text: string) {
     const t = (text ?? "").trim();
@@ -46,10 +85,11 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
   const isTruncated = isProbablyTruncated(localTweet.text);
   const previewText = isTruncated ? `${localTweet.text.slice(0, 140)}...` : localTweet.text;
 
-  async function loadFull() {
+  async function loadFull(expandThread = false) {
     try {
       setLoadingFull(true);
-      const resp = await fetch(`/api/tweets/${localTweet.id}?expand=thread`);
+      const params = expandThread ? "?expand=thread" : "";
+      const resp = await fetch(`/api/tweets/${localTweet.id}${params}`);
       if (!resp.ok) {
         return;
       }
@@ -80,6 +120,19 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
     }
   }
 
+  async function saveNote() {
+    try {
+      setSavingNote(true);
+      await fetch(`/api/bookmarks/${localTweet.id}/note`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note })
+      });
+    } finally {
+      setSavingNote(false);
+    }
+  }
+
   return (
     <article
       className="rounded-lg border border-line bg-panel p-5 transition hover:border-slate-500"
@@ -95,7 +148,7 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
 
       <div className="flex flex-col gap-2" onClick={(event) => event.stopPropagation()}>
         <p className="whitespace-pre-wrap leading-7 text-slate-100">
-          {expanded ? localTweet.text : previewText}
+          {linkedText(expanded ? localTweet.text : previewText)}
         </p>
         <div className="flex flex-wrap gap-3">
           <button
@@ -126,6 +179,17 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
               className="text-sm text-slate-300 underline"
               onClick={(e) => {
                 e.stopPropagation();
+                loadFull(true);
+              }}
+              disabled={loadingFull}
+            >
+              スレッド取得
+            </button>
+            <button
+              type="button"
+              className="text-sm text-slate-300 underline"
+              onClick={(e) => {
+                e.stopPropagation();
                 translate();
               }}
             >
@@ -139,16 +203,37 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
 
       {localTweet.media.length > 0 ? (
         <div className="mt-4 grid grid-cols-2 gap-3" onClick={(event) => event.stopPropagation()}>
-          {localTweet.media.map((image) => (
-            <button
-              key={image.key}
-              type="button"
-              className="overflow-hidden rounded-md border border-line bg-black"
-              onClick={() => onImageClick({ url: image.url, altText: image.altText })}
-            >
-              <img src={image.url} alt={image.altText ?? ""} className="h-48 w-full object-cover" />
-            </button>
-          ))}
+          {localTweet.media.map((image) =>
+            image.videoUrl ? (
+              <div
+                key={image.key}
+                className="overflow-hidden rounded-md border border-line bg-black"
+                onClick={(event) => event.stopPropagation()}
+                onDoubleClick={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+                onPointerUp={(event) => event.stopPropagation()}
+              >
+                <video
+                  src={image.videoUrl}
+                  poster={image.url}
+                  controls
+                  playsInline
+                  loop={image.type === "animated_gif"}
+                  muted={image.type === "animated_gif"}
+                  className="h-48 w-full object-cover"
+                />
+              </div>
+            ) : (
+              <button
+                key={image.key}
+                type="button"
+                className="overflow-hidden rounded-md border border-line bg-black"
+                onClick={() => onImageClick({ url: image.url, altText: image.altText })}
+              >
+                <img src={image.url} alt={image.altText ?? ""} className="h-48 w-full object-cover" />
+              </button>
+            )
+          )}
         </div>
       ) : null}
 
@@ -173,7 +258,14 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
         </button>
       ) : null}
 
-      <div className="mt-5 flex justify-end" onClick={(event) => event.stopPropagation()}>
+      <div className="mt-5 flex justify-end gap-3" onClick={(event) => event.stopPropagation()}>
+        <button
+          type="button"
+          className="rounded-md border border-line px-4 py-2 text-sm font-semibold text-slate-100 transition hover:bg-ink"
+          onClick={() => setNoteOpen((current) => !current)}
+        >
+          {noteOpen ? "メモを閉じる" : note.trim() ? "メモあり" : "メモ"}
+        </button>
         <button
           type="button"
           className="rounded-md border border-red-400/50 px-4 py-2 text-sm font-semibold text-red-100 transition hover:bg-red-950/50"
@@ -182,6 +274,28 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
           ブックマーク解除
         </button>
       </div>
+      {noteOpen ? (
+        <div className="mt-3" onClick={(event) => event.stopPropagation()}>
+          <textarea
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            onBlur={saveNote}
+            rows={4}
+            className="w-full resize-y rounded-md border border-line bg-ink p-3 text-sm leading-6 text-slate-100 outline-none transition placeholder:text-quiet focus:border-slate-500"
+            placeholder="このポストについてのローカルメモ"
+          />
+          <div className="mt-2 flex justify-end">
+            <button
+              type="button"
+              className="rounded-md border border-line px-3 py-1.5 text-sm font-semibold text-slate-100 transition hover:bg-ink disabled:opacity-60"
+              onClick={saveNote}
+              disabled={savingNote}
+            >
+              {savingNote ? "保存中" : "保存"}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </article>
   );
 }

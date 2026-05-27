@@ -10,6 +10,7 @@ import LoginPanel from "./LoginPanel";
 type BookmarkResponse = {
   items: BookmarkTweet[];
   nextToken: string | null;
+  estimatedMonthlyCostUsd?: number;
   error?: string;
 };
 
@@ -23,6 +24,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   X_API_FAILED: "X APIの取得に失敗しました。",
   BOOKMARK_FETCH_FAILED: "ブックマークの取得に失敗しました。",
   BOOKMARK_OPERATION_FAILED: "ブックマーク操作に失敗しました。",
+  BUDGET_EXCEEDED: "今月のX API予算上限に達しそうなので、ローカルキャッシュだけ表示しています。",
   oauth_state: "OAuth認証を安全に完了できませんでした。もう一度ログインしてください。",
   oauth_failed: "X OAuth認証に失敗しました。設定を確認して再ログインしてください。",
   missing_config: ".env の X_CLIENT_ID が未設定です。設定後に docker-compose up -d --build で再起動してください。"
@@ -34,6 +36,7 @@ export default function BookmarkViewer() {
   const [nextToken, setNextToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [estimatedMonthlyCostUsd, setEstimatedMonthlyCostUsd] = useState<number | null>(null);
   const [modalImage, setModalImage] = useState<{ url: string; altText: string | null } | null>(null);
   const [undoTweet, setUndoTweet] = useState<BookmarkTweet | null>(null);
   const nextTokenRef = useRef<string | null>(null);
@@ -53,11 +56,14 @@ export default function BookmarkViewer() {
   }, []);
 
   const loadBookmarks = useCallback(
-    async (mode: "refresh" | "more") => {
+    async (mode: "cache" | "refresh" | "more") => {
       setLoading(true);
       setError(null);
 
       const params = new URLSearchParams();
+      if (mode === "refresh") {
+        params.set("refresh", "1");
+      }
       if (mode === "more" && nextTokenRef.current) {
         params.set("pagination_token", nextTokenRef.current);
       }
@@ -70,9 +76,10 @@ export default function BookmarkViewer() {
           throw new Error(payload.error ?? "BOOKMARK_FETCH_FAILED");
         }
 
-        setItems((current) => (mode === "refresh" ? payload.items : [...current, ...payload.items]));
+        setItems((current) => (mode === "more" ? [...current, ...payload.items] : payload.items));
         nextTokenRef.current = payload.nextToken;
         setNextToken(payload.nextToken);
+        setEstimatedMonthlyCostUsd(payload.estimatedMonthlyCostUsd ?? null);
         setUndoTweet(null);
       } catch (caught) {
         const code = caught instanceof Error ? caught.message : "BOOKMARK_FETCH_FAILED";
@@ -100,7 +107,7 @@ export default function BookmarkViewer() {
 
       if (payload.authenticated) {
         setAuth("authenticated");
-        await loadBookmarks("refresh");
+        await loadBookmarks("cache");
       } else {
         setAuth("anonymous");
       }
@@ -194,6 +201,9 @@ export default function BookmarkViewer() {
             <h1 className="text-lg font-semibold text-white">X Bookmark Viewer</h1>
             <p className="text-sm text-quiet">ブックマーク専用</p>
             <p className="text-xs text-slate-400">v{version}</p>
+            {estimatedMonthlyCostUsd !== null ? (
+              <p className="text-xs text-slate-400">X API今月概算 ${estimatedMonthlyCostUsd.toFixed(3)}</p>
+            ) : null}
           </div>
           <div className="flex gap-3">
             <button
