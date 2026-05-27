@@ -65,6 +65,20 @@ function getDb() {
         resources INTEGER NOT NULL,
         estimated_cost_usd REAL NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS api_usage_resources (
+        billing_window TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        occurred_at INTEGER NOT NULL,
+        PRIMARY KEY (billing_window, resource_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS bookmark_notes (
+        tweet_id TEXT PRIMARY KEY,
+        note TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `);
   }
 
@@ -200,18 +214,19 @@ export function getCachedBookmarkPage(offset = 0, limit = 50): CachedBookmarkPag
   const rows = getDb()
     .prepare(
       `
-      SELECT payload
+      SELECT cached_bookmark_tweets.payload, bookmark_notes.note
       FROM cached_bookmark_tweets
-      ORDER BY sort_order ASC, cached_at DESC
+      LEFT JOIN bookmark_notes ON bookmark_notes.tweet_id = cached_bookmark_tweets.tweet_id
+      ORDER BY cached_bookmark_tweets.sort_order ASC, cached_bookmark_tweets.cached_at DESC
       LIMIT ? OFFSET ?
     `
     )
-    .all(limit, offset) as { payload: string }[];
+    .all(limit, offset) as { payload: string; note: string | null }[];
 
   const total = getCachedBookmarkCount();
 
   return {
-    items: rows.map((row) => JSON.parse(row.payload) as BookmarkTweet),
+    items: rows.map((row) => ({ ...(JSON.parse(row.payload) as BookmarkTweet), note: row.note })),
     nextToken: offset + rows.length < total ? `cache:${offset + rows.length}` : null
   };
 }
@@ -270,6 +285,30 @@ export function saveCachedTweet(tweet: BookmarkTweet) {
     });
 }
 
+export function saveBookmarkNote(tweetId: string, note: string) {
+  const trimmed = note.trim();
+  const db = getDb();
+
+  if (!trimmed) {
+    db.prepare("DELETE FROM bookmark_notes WHERE tweet_id = ?").run(tweetId);
+    return;
+  }
+
+  db.prepare(
+    `
+    INSERT INTO bookmark_notes (tweet_id, note, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(tweet_id) DO UPDATE SET
+      note = excluded.note,
+      updated_at = excluded.updated_at
+  `
+  ).run(tweetId, note, Date.now());
+}
+
+export function deleteBookmarkNote(tweetId: string) {
+  getDb().prepare("DELETE FROM bookmark_notes WHERE tweet_id = ?").run(tweetId);
+}
+
 export function recordApiUsage(operation: string, resources: number, estimatedCostUsd: number) {
   getDb()
     .prepare(
@@ -279,6 +318,45 @@ export function recordApiUsage(operation: string, resources: number, estimatedCo
     `
     )
     .run(Date.now(), operation, resources, estimatedCostUsd);
+}
+
+export function recordApiUsageForResources(operation: string, resourceIds: string[], costPerResourceUsd: number) {
+  const uniqueIds = [...new Set(resourceIds)].filter(Boolean);
+  if (uniqueIds.length === 0) {
+    return 0;
+  }
+
+  const now = Date.now();
+  const billingWindow = new Date(now).toISOString().slice(0, 10);
+  const db = getDb();
+
+  const chargedResources = db.transaction(() => {
+    const statement = db.prepare(
+      `
+      INSERT OR IGNORE INTO api_usage_resources (billing_window, resource_id, operation, occurred_at)
+      VALUES (?, ?, ?, ?)
+    `
+    );
+
+    let inserted = 0;
+    for (const id of uniqueIds) {
+      const result = statement.run(billingWindow, id, operation, now);
+      inserted += result.changes;
+    }
+
+    if (inserted > 0) {
+      db.prepare(
+        `
+        INSERT INTO api_usage (occurred_at, operation, resources, estimated_cost_usd)
+        VALUES (?, ?, ?, ?)
+      `
+      ).run(now, operation, inserted, inserted * costPerResourceUsd);
+    }
+
+    return inserted;
+  })();
+
+  return chargedResources;
 }
 
 export function getMonthlyEstimatedApiCost(now = Date.now()) {

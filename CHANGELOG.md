@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.0.0 - 2026-05-27
+
+- Release: Promote the local X Bookmark Viewer workflow to v1.0.0.
+- Feature: Prefer SQLite cache for initial bookmark display and load more from cache before calling X API.
+- Feature: Add local per-bookmark notes.
+- Feature: Show app version and estimated monthly X API cost.
+- Feature: Link URLs in post text and render video media in cards.
+- Chore: Document local cache storage, budget configuration, and Docker volume behavior.
+
 ## 2026-05-27
 
 - Fix: Use `https://x.com/i/oauth2/authorize` in `lib/x-api.ts` (OAuth authorization URL)

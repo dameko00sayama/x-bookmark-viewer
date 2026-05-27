@@ -10,6 +10,7 @@ services:
       X_CALLBACK_URL: "http://localhost:8080/api/auth/callback/x"
       TOKEN_ENCRYPTION_KEY: "${TOKEN_ENCRYPTION_KEY:-local-development-change-me}"
       DATA_DIR: "/app/data"
+      MONTHLY_X_API_BUDGET_USD: "${MONTHLY_X_API_BUDGET_USD:-3}"
       PORT: "8080"
     volumes:
       - app-data:/app/data
