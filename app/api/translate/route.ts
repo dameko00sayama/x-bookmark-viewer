@@ -10,28 +10,64 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "NO_TEXT" }, { status: 400 });
     }
 
-    // Use libretranslate public instance as a best-effort translator.
-    const resp = await fetch("https://libretranslate.de/translate", {
+    // Use Google Translate unofficial endpoint first for better availability.
+    const google = await fetch(
+      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(
+        target
+      )}&dt=t&q=${encodeURIComponent(text)}`
+    );
+    if (google.ok) {
+      const rawGoogle = await google.text();
+      try {
+        const parsedGoogle = JSON.parse(rawGoogle);
+        const parts = (parsedGoogle[0] || []).map((seg: any) => seg[0]).filter(Boolean);
+        if (parts.length > 0) {
+          return NextResponse.json({ translatedText: parts.join("") });
+        }
+      } catch (e) {
+        // ignore and try fallback
+      }
+    }
+
+    // Fallback to libretranslate public instance.
+    const resp = await fetch("https://de.libretranslate.com/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ q: text, source: "auto", target, format: "text" })
     });
+    if (resp.ok) {
+      const raw = await resp.text().catch(() => "");
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+        parsed = null;
+      }
 
-    if (!resp.ok) {
+      const translated = parsed?.translatedText ?? parsed?.translated_text ?? null;
+      if (translated) {
+        return NextResponse.json({ translatedText: translated });
+      }
+    }
+
+    // Try MyMemory fallback.
+    try {
       const fallback = await fetch(
         `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=auto|${encodeURIComponent(
           target
         )}`
       );
-      if (!fallback.ok) {
-        throw new Error("TRANSLATION_FAILED");
+      if (fallback.ok) {
+        const fb = await fallback.json().catch(() => null);
+        if (fb?.responseData?.translatedText) {
+          return NextResponse.json({ translatedText: fb.responseData.translatedText });
+        }
       }
-      const fb = await fallback.json();
-      return NextResponse.json({ translatedText: fb.responseData.translatedText });
+    } catch (e) {
+      // ignore
     }
 
-    const payload = await resp.json();
-    return NextResponse.json({ translatedText: payload.translatedText ?? payload.translated_text ?? payload });
+    return NextResponse.json({ error: "TRANSLATION_FAILED" }, { status: 502 });
   } catch (err) {
     return NextResponse.json({ error: "TRANSLATION_FAILED" }, { status: 500 });
   }

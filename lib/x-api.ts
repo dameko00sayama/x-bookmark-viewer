@@ -54,12 +54,12 @@ export function createCodeChallenge(verifier: string) {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
-function getBaseUrl() {
-  return process.env.APP_BASE_URL ?? "http://localhost:8080";
+function getBaseUrl(defaultBaseUrl?: string) {
+  return process.env.APP_BASE_URL ?? defaultBaseUrl ?? "http://localhost:8080";
 }
 
-function getCallbackUrl() {
-  return process.env.X_CALLBACK_URL ?? `${getBaseUrl()}/api/auth/callback/x`;
+function getCallbackUrl(defaultBaseUrl?: string) {
+  return process.env.X_CALLBACK_URL ?? `${getBaseUrl(defaultBaseUrl)}/api/auth/callback/x`;
 }
 
 function getTokenHeaders() {
@@ -88,17 +88,20 @@ async function postToken(body: URLSearchParams): Promise<TokenResponse> {
   });
 
   if (!response.ok) {
-    throw new Error(`X OAuth token request failed: ${response.status}`);
+    const detail = await response.text().catch(() => null);
+    throw new Error(
+      `X OAuth token request failed: ${response.status}${detail ? `: ${detail}` : ""}`
+    );
   }
 
   return response.json();
 }
 
-export function buildAuthorizationUrl(state: string, codeChallenge: string) {
-  const url = new URL("https://twitter.com/i/oauth2/authorize");
+export function buildAuthorizationUrl(state: string, codeChallenge: string, defaultBaseUrl?: string) {
+  const url = new URL("https://x.com/i/oauth2/authorize");
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", getRequiredEnv("X_CLIENT_ID"));
-  url.searchParams.set("redirect_uri", getCallbackUrl());
+  url.searchParams.set("redirect_uri", getCallbackUrl(defaultBaseUrl));
   url.searchParams.set("scope", getScopes());
   url.searchParams.set("state", state);
   url.searchParams.set("code_challenge", codeChallenge);
@@ -194,6 +197,52 @@ async function xFetch(path: string, init: RequestInit = {}) {
   return response;
 }
 
+const X_WEB_BASE = "https://x.com";
+
+async function fetchTweetTextFromWeb(tweetId: string): Promise<string | null> {
+  const response = await fetch(`${X_WEB_BASE}/i/web/status/${tweetId}`, {
+    headers: {
+      "User-Agent": "Mozilla/5.0"
+    }
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const html = await response.text();
+  const marker = "window.__INITIAL_STATE__=";
+  const start = html.indexOf(marker);
+  if (start === -1) {
+    return null;
+  }
+
+  const end = html.indexOf("</script>", start);
+  if (end === -1) {
+    return null;
+  }
+
+  const jsonText = html.slice(start + marker.length, end);
+  let state: any;
+  try {
+    state = JSON.parse(jsonText);
+  } catch {
+    return null;
+  }
+
+  const tweetData = state?.entities?.tweets?.entities?.[tweetId];
+  if (!tweetData) {
+    return null;
+  }
+
+  const text = tweetData.full_text ?? tweetData.text;
+  if (typeof text !== "string") {
+    return null;
+  }
+
+  return text.replace(/^[\s\u00a0]+|[\s\u00a0]+$/g, "");
+}
+
 export async function fetchMe(accessToken: string): Promise<{ id: string; name: string; username: string }> {
   const response = await fetch(`${X_API_BASE}/2/users/me?user.fields=username,name`, {
     headers: {
@@ -202,7 +251,10 @@ export async function fetchMe(accessToken: string): Promise<{ id: string; name: 
   });
 
   if (!response.ok) {
-    throw new Error(`X user request failed: ${response.status}`);
+    const detail = await response.text().catch(() => null);
+    throw new Error(
+      `X user request failed: ${response.status}${detail ? `: ${detail}` : ""}`
+    );
   }
 
   const payload = await response.json();
@@ -228,20 +280,100 @@ export async function fetchBookmarks(paginationToken?: string | null): Promise<B
   return normalizeBookmarks(payload);
 }
 
-export async function fetchTweet(tweetId: string): Promise<BookmarkTweet> {
+export async function fetchTweet(tweetId: string, expandThread = false): Promise<BookmarkTweet> {
   const auth = await getValidAuth();
   const url = new URL(`${X_API_BASE}/2/tweets/${tweetId}`);
-  url.searchParams.set("tweet.fields", "attachments,author_id,created_at,referenced_tweets,text,entities,conversation_id");
+  url.searchParams.set(
+    "tweet.fields",
+    "attachments,author_id,created_at,referenced_tweets,text,entities,conversation_id"
+  );
   url.searchParams.set("user.fields", "name,username");
   url.searchParams.set("media.fields", "alt_text,preview_image_url,type,url");
-  url.searchParams.set("expansions", "author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id");
+  url.searchParams.set(
+    "expansions",
+    "author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id"
+  );
 
   const response = await xFetch(`${url.pathname}${url.search}`);
   const payload = await response.json();
 
-  // reuse normalization logic: payload.data is a single tweet
+  // normalize initial tweet
   const norm = normalizeBookmarks({ data: [payload.data], includes: payload.includes ?? {} });
-  return norm.items[0];
+  let tweet = norm.items[0];
+
+  if (tweet && tweet.text.length >= 140) {
+    const webText = await fetchTweetTextFromWeb(tweet.id).catch(() => null);
+    if (webText && webText.length > tweet.text.length) {
+      tweet.text = webText;
+    }
+  }
+
+  // If requested, try to expand thread by fetching other tweets in the same conversation
+  if (expandThread && tweet?.createdAt && payload.data?.conversation_id) {
+    try {
+      const convId = payload.data.conversation_id;
+      const authorId = payload.data.author_id;
+      const sUrl = new URL(`${X_API_BASE}/2/tweets/search/recent`);
+      // search for other tweets in the same conversation by the same author
+      sUrl.searchParams.set("query", `conversation_id:${convId} author_id:${authorId}`);
+      sUrl.searchParams.set("max_results", "100");
+      sUrl.searchParams.set(
+        "tweet.fields",
+        "attachments,author_id,created_at,referenced_tweets,text,conversation_id"
+      );
+      sUrl.searchParams.set("expansions", "author_id,attachments.media_keys");
+      sUrl.searchParams.set("user.fields", "name,username");
+      sUrl.searchParams.set("media.fields", "alt_text,preview_image_url,type,url");
+
+      const sResp = await xFetch(`${sUrl.pathname}${sUrl.search}`);
+      const sPayload = await sResp.json();
+
+      // collect tweets from data + includes.tweets
+      const tweets: any[] = [];
+      if (sPayload.data) {
+        tweets.push(...(Array.isArray(sPayload.data) ? sPayload.data : [sPayload.data]));
+      }
+      if (sPayload.includes?.tweets) {
+        tweets.push(...sPayload.includes.tweets);
+      }
+
+      // keep only those by the same author and sort by created_at
+      const sameAuthor = tweets
+        .filter((t) => t.author_id === authorId)
+        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+      if (sameAuthor.length > 0) {
+        // assemble full text by joining texts (ensure original tweet first)
+        const parts = sameAuthor.map((t) => t.text ?? "");
+        // If original tweet is included twice, dedupe by id
+        const ids = new Set<string>();
+        const orderedParts: string[] = [];
+        for (const t of sameAuthor) {
+          if (!ids.has(t.id)) {
+            ids.add(t.id);
+            orderedParts.push(t.text ?? "");
+          }
+        }
+        tweet.text = orderedParts.join("\n\n");
+
+        // merge media from includes if present
+        const mediaMap = new Map<string, any>();
+        for (const m of sPayload.includes?.media ?? []) {
+          const url = m.url ?? m.preview_image_url;
+          if (url) {
+            mediaMap.set(m.media_key, { key: m.media_key, type: m.type, url, altText: m.alt_text ?? null });
+          }
+        }
+
+        const mediaKeys = sameAuthor.flatMap((t) => t.attachments?.media_keys ?? []);
+        tweet.media = mediaKeys.map((k: string) => mediaMap.get(k)).filter(Boolean);
+      }
+    } catch (e) {
+      // best-effort; ignore errors while expanding thread
+    }
+  }
+
+  return tweet;
 }
 
 export async function removeBookmark(tweetId: string) {

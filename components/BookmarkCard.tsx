@@ -32,6 +32,13 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
   const [localTweet, setLocalTweet] = useState<BookmarkTweet>(tweet);
   const [trans, setTrans] = useState<string | null>(null);
   const [loadingFull, setLoadingFull] = useState(false);
+  function isProbablyTruncated(text: string) {
+    const t = (text ?? "").trim();
+    if (t.length > 140) return true;
+    if (t.endsWith("…") || t.endsWith("...")) return true;
+    if (t.includes("…") && t.length > 100) return true;
+    return false;
+  }
   const openTweet = () => {
     window.open(tweetUrl(localTweet), "_blank", "noopener,noreferrer");
   };
@@ -39,7 +46,7 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
   async function loadFull() {
     try {
       setLoadingFull(true);
-      const resp = await fetch(`/api/tweets/${localTweet.id}`);
+      const resp = await fetch(`/api/tweets/${localTweet.id}?expand=thread`);
       if (!resp.ok) {
         return;
       }
@@ -52,20 +59,21 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
 
   async function translate() {
     try {
-      setTrans("..");
+      setTrans("翻訳中...");
       const resp = await fetch(`/api/translate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: localTweet.text, target: "ja" })
       });
       if (!resp.ok) {
-        setTrans(null);
+        const body = await resp.json().catch(() => ({}));
+        setTrans(body?.error ?? "翻訳に失敗しました");
         return;
       }
       const payload = await resp.json();
-      setTrans(payload.translatedText ?? null);
+      setTrans(payload.translatedText ?? payload.translated_text ?? "");
     } catch (e) {
-      setTrans(null);
+      setTrans("翻訳に失敗しました");
     }
   }
 
@@ -84,8 +92,8 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
 
       <details className="group" onClick={(event) => event.stopPropagation()}>
         <summary className="list-none whitespace-pre-wrap leading-7 text-slate-100 group-open:hidden">
-          {localTweet.text.length > 140 ? `${localTweet.text.slice(0, 140)}...` : localTweet.text}
-          {localTweet.text.length > 140 ? (
+          {isProbablyTruncated(localTweet.text) ? `${localTweet.text.slice(0, 140)}...` : localTweet.text}
+          {isProbablyTruncated(localTweet.text) ? (
             <span className="ml-2 text-sm font-semibold text-slate-300">続きを読む</span>
           ) : null}
         </summary>

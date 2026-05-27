@@ -1,13 +1,14 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { saveOAuthState } from "@/lib/db";
 import { buildAuthorizationUrl, createCodeChallenge } from "@/lib/x-api";
 import { randomBase64Url } from "@/lib/session";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const state = randomBase64Url(24);
     const verifier = randomBase64Url(64);
-    const url = buildAuthorizationUrl(state, createCodeChallenge(verifier));
+    const origin = request.nextUrl.origin;
+    const url = buildAuthorizationUrl(state, createCodeChallenge(verifier), origin);
 
     saveOAuthState(state, verifier);
 

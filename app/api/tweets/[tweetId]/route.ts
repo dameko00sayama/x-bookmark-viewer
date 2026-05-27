@@ -7,9 +7,11 @@ type Context = {
 
 export async function GET(_request: NextRequest, context: Context) {
   const { tweetId } = await context.params;
+  const url = new URL(_request.url);
+  const expand = url.searchParams.get("expand");
 
   try {
-    const tweet = await fetchTweet(tweetId);
+    const tweet = await fetchTweet(tweetId, expand === "thread");
     return NextResponse.json(tweet);
   } catch (error) {
     if (error instanceof AuthRequiredError) {

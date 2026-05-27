@@ -28,7 +28,9 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.redirect(appUrl("/", request.url));
-  } catch {
-    return NextResponse.redirect(appUrl("/?error=oauth_failed", request.url));
+  } catch (error) {
+    console.error("OAuth callback failed:", error);
+    const reason = error instanceof Error ? error.message : String(error);
+    return NextResponse.redirect(appUrl(`/?error=oauth_failed&reason=${encodeURIComponent(reason)}`, request.url));
   }
 }

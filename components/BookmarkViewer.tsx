@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BookmarkTweet } from "@/lib/x-api";
+import packageJson from "@/package.json";
 import BookmarkCard from "./BookmarkCard";
 import ImageModal from "./ImageModal";
 import LoginPanel from "./LoginPanel";
@@ -41,8 +42,14 @@ export default function BookmarkViewer() {
     if (typeof window === "undefined") {
       return null;
     }
-    const raw = new URLSearchParams(window.location.search).get("error");
-    return raw ? ERROR_MESSAGES[raw] ?? raw : null;
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get("error");
+    const reason = params.get("reason");
+    if (!raw) {
+      return null;
+    }
+    const message = ERROR_MESSAGES[raw] ?? raw;
+    return reason ? `${message} (${reason})` : message;
   }, []);
 
   const loadBookmarks = useCallback(
@@ -177,6 +184,8 @@ export default function BookmarkViewer() {
     return <LoginPanel error={loginError ?? error} />;
   }
 
+  const version = packageJson.version ?? "0.0.0";
+
   return (
     <main className="mx-auto min-h-screen w-full max-w-[760px] px-6 py-8">
       <header className="sticky top-0 z-20 -mx-6 mb-6 border-b border-line bg-ink/95 px-6 py-4 backdrop-blur">
@@ -184,6 +193,7 @@ export default function BookmarkViewer() {
           <div>
             <h1 className="text-lg font-semibold text-white">X Bookmark Viewer</h1>
             <p className="text-sm text-quiet">ブックマーク専用</p>
+            <p className="text-xs text-slate-400">v{version}</p>
           </div>
           <div className="flex gap-3">
             <button
