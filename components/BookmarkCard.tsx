@@ -46,10 +46,11 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
   const isTruncated = isProbablyTruncated(localTweet.text);
   const previewText = isTruncated ? `${localTweet.text.slice(0, 140)}...` : localTweet.text;
 
-  async function loadFull() {
+  async function loadFull(expandThread = false) {
     try {
       setLoadingFull(true);
-      const resp = await fetch(`/api/tweets/${localTweet.id}?expand=thread`);
+      const params = expandThread ? "?expand=thread" : "";
+      const resp = await fetch(`/api/tweets/${localTweet.id}${params}`);
       if (!resp.ok) {
         return;
       }
@@ -120,6 +121,17 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
               disabled={loadingFull}
             >
               {loadingFull ? "取得中..." : "全文取得"}
+            </button>
+            <button
+              type="button"
+              className="text-sm text-slate-300 underline"
+              onClick={(e) => {
+                e.stopPropagation();
+                loadFull(true);
+              }}
+              disabled={loadingFull}
+            >
+              スレッド取得
             </button>
             <button
               type="button"

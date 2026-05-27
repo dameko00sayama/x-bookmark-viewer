@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { AuthRequiredError, XApiError, fetchTweet } from "@/lib/x-api";
+import { saveCachedTweet } from "@/lib/db";
+import { AuthRequiredError, BudgetExceededError, XApiError, fetchTweet } from "@/lib/x-api";
 
 type Context = {
   params: Promise<{ tweetId: string }>;
@@ -12,10 +13,15 @@ export async function GET(_request: NextRequest, context: Context) {
 
   try {
     const tweet = await fetchTweet(tweetId, expand === "thread");
+    saveCachedTweet(tweet);
     return NextResponse.json(tweet);
   } catch (error) {
     if (error instanceof AuthRequiredError) {
       return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    if (error instanceof BudgetExceededError) {
+      return NextResponse.json({ error: "BUDGET_EXCEEDED" }, { status: 402 });
     }
 
     if (error instanceof XApiError) {

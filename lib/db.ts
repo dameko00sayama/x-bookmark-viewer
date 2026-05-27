@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
 import { decryptText, encryptText } from "./crypto";
+import type { BookmarkTweet } from "./x-api";
 
 export type StoredAuth = {
   userId: string;
@@ -47,6 +48,22 @@ function getDb() {
         verifier TEXT NOT NULL,
         expires_at INTEGER NOT NULL,
         created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS cached_bookmark_tweets (
+        tweet_id TEXT PRIMARY KEY,
+        payload TEXT NOT NULL,
+        sort_order INTEGER NOT NULL,
+        cached_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS api_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        occurred_at INTEGER NOT NULL,
+        operation TEXT NOT NULL,
+        resources INTEGER NOT NULL,
+        estimated_cost_usd REAL NOT NULL
       );
     `);
   }
@@ -139,4 +156,136 @@ export function consumeOAuthState(state: string): StoredOAuthState | null {
     verifier: decryptText(row.verifier),
     expiresAt: row.expires_at
   };
+}
+
+export type CachedBookmarkPage = {
+  items: BookmarkTweet[];
+  nextToken: string | null;
+};
+
+export function getSetting(key: string): string | null {
+  const row = getDb()
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function setSetting(key: string, value: string | null) {
+  if (value === null) {
+    getDb().prepare("DELETE FROM settings WHERE key = ?").run(key);
+    return;
+  }
+
+  getDb()
+    .prepare(
+      `
+      INSERT INTO settings (key, value, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+    `
+    )
+    .run(key, value, Date.now());
+}
+
+export function getCachedBookmarkCount() {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS count FROM cached_bookmark_tweets")
+    .get() as { count: number };
+  return row.count;
+}
+
+export function getCachedBookmarkPage(offset = 0, limit = 50): CachedBookmarkPage {
+  const rows = getDb()
+    .prepare(
+      `
+      SELECT payload
+      FROM cached_bookmark_tweets
+      ORDER BY sort_order ASC, cached_at DESC
+      LIMIT ? OFFSET ?
+    `
+    )
+    .all(limit, offset) as { payload: string }[];
+
+  const total = getCachedBookmarkCount();
+
+  return {
+    items: rows.map((row) => JSON.parse(row.payload) as BookmarkTweet),
+    nextToken: offset + rows.length < total ? `cache:${offset + rows.length}` : null
+  };
+}
+
+export function saveCachedBookmarkPage(items: BookmarkTweet[], offset: number, nextXToken: string | null) {
+  const now = Date.now();
+  const db = getDb();
+
+  db.transaction(() => {
+    if (offset === 0 && items.length > 0) {
+      db.prepare("UPDATE cached_bookmark_tweets SET sort_order = sort_order + ?").run(items.length);
+    }
+
+    const statement = db.prepare(
+      `
+      INSERT INTO cached_bookmark_tweets (tweet_id, payload, sort_order, cached_at, updated_at)
+      VALUES (@tweetId, @payload, @sortOrder, @cachedAt, @updatedAt)
+      ON CONFLICT(tweet_id) DO UPDATE SET
+        payload = excluded.payload,
+        sort_order = excluded.sort_order,
+        updated_at = excluded.updated_at
+    `
+    );
+
+    items.forEach((item, index) => {
+      statement.run({
+        tweetId: item.id,
+        payload: JSON.stringify(item),
+        sortOrder: offset + index,
+        cachedAt: now,
+        updatedAt: now
+      });
+    });
+
+    setSetting("bookmarks_next_x_token", nextXToken);
+  })();
+}
+
+export function saveCachedTweet(tweet: BookmarkTweet) {
+  const now = Date.now();
+  getDb()
+    .prepare(
+      `
+      INSERT INTO cached_bookmark_tweets (tweet_id, payload, sort_order, cached_at, updated_at)
+      VALUES (@tweetId, @payload, COALESCE((SELECT sort_order FROM cached_bookmark_tweets WHERE tweet_id = @tweetId), 0), @cachedAt, @updatedAt)
+      ON CONFLICT(tweet_id) DO UPDATE SET
+        payload = excluded.payload,
+        updated_at = excluded.updated_at
+    `
+    )
+    .run({
+      tweetId: tweet.id,
+      payload: JSON.stringify(tweet),
+      cachedAt: now,
+      updatedAt: now
+    });
+}
+
+export function recordApiUsage(operation: string, resources: number, estimatedCostUsd: number) {
+  getDb()
+    .prepare(
+      `
+      INSERT INTO api_usage (occurred_at, operation, resources, estimated_cost_usd)
+      VALUES (?, ?, ?, ?)
+    `
+    )
+    .run(Date.now(), operation, resources, estimatedCostUsd);
+}
+
+export function getMonthlyEstimatedApiCost(now = Date.now()) {
+  const date = new Date(now);
+  const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+  const row = getDb()
+    .prepare("SELECT COALESCE(SUM(estimated_cost_usd), 0) AS cost FROM api_usage WHERE occurred_at >= ?")
+    .get(start) as { cost: number };
+  return row.cost;
 }

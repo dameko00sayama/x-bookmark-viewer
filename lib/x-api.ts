@@ -1,5 +1,11 @@
 import { createHash } from "crypto";
-import { getAuth, saveAuth, type StoredAuth } from "./db";
+import {
+  getAuth,
+  getMonthlyEstimatedApiCost,
+  recordApiUsage,
+  saveAuth,
+  type StoredAuth
+} from "./db";
 
 export type BookmarkMedia = {
   key: string;
@@ -37,6 +43,7 @@ type TokenResponse = {
 
 const X_API_BASE = "https://api.x.com";
 const SCOPES = ["tweet.read", "users.read", "bookmark.read", "bookmark.write", "offline.access"];
+const OWNED_READ_COST_USD = 0.001;
 const BOOKMARK_TWEET_FIELDS = [
   "attachments",
   "author_id",
@@ -70,6 +77,17 @@ export function getRequiredEnv(name: string) {
 
 export function createCodeChallenge(verifier: string) {
   return createHash("sha256").update(verifier).digest("base64url");
+}
+
+function getMonthlyBudgetUsd() {
+  const value = Number(process.env.MONTHLY_X_API_BUDGET_USD ?? "3");
+  return Number.isFinite(value) && value > 0 ? value : 3;
+}
+
+function assertWithinMonthlyBudget(estimatedCostUsd: number) {
+  if (getMonthlyEstimatedApiCost() + estimatedCostUsd > getMonthlyBudgetUsd()) {
+    throw new BudgetExceededError();
+  }
 }
 
 function getBaseUrl(defaultBaseUrl?: string) {
@@ -193,6 +211,13 @@ export class XApiError extends Error {
   }
 }
 
+export class BudgetExceededError extends Error {
+  constructor() {
+    super("Monthly X API budget would be exceeded");
+    this.name = "BudgetExceededError";
+  }
+}
+
 async function xFetch(path: string, init: RequestInit = {}) {
   const auth = await getValidAuth();
   const response = await fetch(`${X_API_BASE}${path}`, {
@@ -280,6 +305,7 @@ export async function fetchMe(accessToken: string): Promise<{ id: string; name: 
 }
 
 export async function fetchBookmarks(paginationToken?: string | null): Promise<BookmarkPage> {
+  assertWithinMonthlyBudget(50 * OWNED_READ_COST_USD);
   const auth = await getValidAuth();
   const url = new URL(`${X_API_BASE}/2/users/${auth.userId}/bookmarks`);
   url.searchParams.set("max_results", "50");
@@ -294,11 +320,14 @@ export async function fetchBookmarks(paginationToken?: string | null): Promise<B
 
   const response = await xFetch(`${url.pathname}${url.search}`);
   const payload = await response.json();
+  const resourceCount = Array.isArray(payload.data) ? payload.data.length : 0;
+  recordApiUsage("bookmarks", resourceCount, resourceCount * OWNED_READ_COST_USD);
 
   return normalizeBookmarks(payload);
 }
 
 export async function fetchTweet(tweetId: string, expandThread = false): Promise<BookmarkTweet> {
+  assertWithinMonthlyBudget((expandThread ? 101 : 1) * OWNED_READ_COST_USD);
   const auth = await getValidAuth();
   const url = new URL(`${X_API_BASE}/2/tweets/${tweetId}`);
   url.searchParams.set("tweet.fields", FULL_TWEET_FIELDS);
@@ -311,6 +340,7 @@ export async function fetchTweet(tweetId: string, expandThread = false): Promise
 
   const response = await xFetch(`${url.pathname}${url.search}`);
   const payload = await response.json();
+  recordApiUsage("tweet", payload.data ? 1 : 0, payload.data ? OWNED_READ_COST_USD : 0);
 
   // normalize initial tweet
   const norm = normalizeBookmarks({ data: [payload.data], includes: payload.includes ?? {} });
@@ -339,6 +369,8 @@ export async function fetchTweet(tweetId: string, expandThread = false): Promise
 
       const sResp = await xFetch(`${sUrl.pathname}${sUrl.search}`);
       const sPayload = await sResp.json();
+      const searchResourceCount = Array.isArray(sPayload.data) ? sPayload.data.length : 0;
+      recordApiUsage("thread_search", searchResourceCount, searchResourceCount * OWNED_READ_COST_USD);
 
       // collect tweets from data + includes.tweets
       const tweets: any[] = [];
