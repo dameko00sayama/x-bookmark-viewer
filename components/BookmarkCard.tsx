@@ -28,6 +28,42 @@ function tweetUrl(tweet: BookmarkTweet | Omit<BookmarkTweet, "media" | "quotedTw
   return `https://x.com/${username}/status/${tweet.id}`;
 }
 
+function linkedText(text: string) {
+  const urlPattern = /https?:\/\/[^\s<>"']+/g;
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(urlPattern)) {
+    const url = match[0];
+    const index = match.index ?? 0;
+
+    if (index > lastIndex) {
+      nodes.push(text.slice(lastIndex, index));
+    }
+
+    nodes.push(
+      <a
+        key={`${url}-${index}`}
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="break-all text-sky-300 underline decoration-sky-300/60 underline-offset-2 hover:text-sky-200"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {url}
+      </a>
+    );
+
+    lastIndex = index + url.length;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
+}
+
 export default function BookmarkCard({ tweet, onRemove, onImageClick }: BookmarkCardProps) {
   const [localTweet, setLocalTweet] = useState<BookmarkTweet>(tweet);
   const [trans, setTrans] = useState<string | null>(null);
@@ -96,7 +132,7 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
 
       <div className="flex flex-col gap-2" onClick={(event) => event.stopPropagation()}>
         <p className="whitespace-pre-wrap leading-7 text-slate-100">
-          {expanded ? localTweet.text : previewText}
+          {linkedText(expanded ? localTweet.text : previewText)}
         </p>
         <div className="flex flex-wrap gap-3">
           <button
@@ -180,7 +216,7 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
             <span>{formatDate(localTweet.quotedTweet.createdAt)}</span>
           </div>
           <p className="line-clamp-4 whitespace-pre-wrap text-sm leading-6 text-slate-200">
-            {localTweet.quotedTweet.text}
+            {linkedText(localTweet.quotedTweet.text)}
           </p>
         </button>
       ) : null}
