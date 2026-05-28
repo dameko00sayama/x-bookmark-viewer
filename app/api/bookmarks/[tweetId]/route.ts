@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteBookmarkNote } from "@/lib/db";
 import { addBookmark, AuthRequiredError, removeBookmark, XApiError } from "@/lib/x-api";
 
 type Context = {
@@ -25,7 +24,6 @@ export async function DELETE(_request: NextRequest, context: Context) {
 
   try {
     await removeBookmark(tweetId);
-    deleteBookmarkNote(tweetId);
     return NextResponse.json({ ok: true });
   } catch (error) {
     return toErrorResponse(error);

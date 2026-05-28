@@ -11,6 +11,7 @@ services:
       TOKEN_ENCRYPTION_KEY: "${TOKEN_ENCRYPTION_KEY:-local-development-change-me}"
       DATA_DIR: "/app/data"
       MONTHLY_X_API_BUDGET_USD: "${MONTHLY_X_API_BUDGET_USD:-3}"
+      ENABLE_EXTERNAL_TRANSLATION: "${ENABLE_EXTERNAL_TRANSLATION:-0}"
       PORT: "8080"
     volumes:
       - app-data:/app/data

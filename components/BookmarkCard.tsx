@@ -137,6 +137,7 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState(tweet.note ?? "");
   const [savingNote, setSavingNote] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
   const [loadingFull, setLoadingFull] = useState(false);
   function isProbablyTruncated(text: string) {
     const t = (text ?? "").trim();
@@ -176,7 +177,11 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
       });
       if (!resp.ok) {
         const body = await resp.json().catch(() => ({}));
-        setTrans(body?.error ?? "翻訳に失敗しました");
+        setTrans(
+          body?.error === "EXTERNAL_TRANSLATION_DISABLED"
+            ? "外部翻訳は無効です。使う場合は ENABLE_EXTERNAL_TRANSLATION=1 を設定してください。"
+            : body?.error ?? "翻訳に失敗しました"
+        );
         return;
       }
       const payload = await resp.json();
@@ -189,11 +194,15 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
   async function saveNote() {
     try {
       setSavingNote(true);
-      await fetch(`/api/bookmarks/${localTweet.id}/note`, {
+      setNoteError(null);
+      const response = await fetch(`/api/bookmarks/${localTweet.id}/note`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ note })
       });
+      if (!response.ok) {
+        setNoteError("繝｡繝｢縺ｮ菫晏ｭ倥↓螟ｱ謨励＠縺ｾ縺励◆");
+      }
     } finally {
       setSavingNote(false);
     }
@@ -342,6 +351,7 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
             placeholder="このポストについてのローカルメモ"
           />
           <div className="mt-2 flex justify-end">
+            {noteError ? <p className="mr-auto text-sm text-red-200">{noteError}</p> : null}
             <button
               type="button"
               className="rounded-md border border-line px-3 py-1.5 text-sm font-semibold text-slate-100 transition hover:bg-ink disabled:opacity-60"

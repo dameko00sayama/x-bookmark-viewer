@@ -10,11 +10,13 @@ import LoginPanel from "./LoginPanel";
 type BookmarkResponse = {
   items: BookmarkTweet[];
   nextToken: string | null;
+  source?: "cache" | "x";
   estimatedMonthlyCostUsd?: number;
   error?: string;
 };
 
 type AuthState = "checking" | "anonymous" | "authenticated";
+type LoadingMode = "cache" | "refresh" | "more";
 
 const ERROR_MESSAGES: Record<string, string> = {
   AUTH_REQUIRED: "認証が切れています。再ログインしてください。",
@@ -34,12 +36,15 @@ export default function BookmarkViewer() {
   const [auth, setAuth] = useState<AuthState>("checking");
   const [items, setItems] = useState<BookmarkTweet[]>([]);
   const [nextToken, setNextToken] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingMode, setLoadingMode] = useState<LoadingMode | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastSource, setLastSource] = useState<BookmarkResponse["source"] | null>(null);
+  const [refreshSucceeded, setRefreshSucceeded] = useState(false);
   const [estimatedMonthlyCostUsd, setEstimatedMonthlyCostUsd] = useState<number | null>(null);
   const [modalImage, setModalImage] = useState<{ url: string; altText: string | null } | null>(null);
   const [undoTweet, setUndoTweet] = useState<BookmarkTweet | null>(null);
   const nextTokenRef = useRef<string | null>(null);
+  const refreshDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loginError = useMemo(() => {
     if (typeof window === "undefined") {
@@ -57,8 +62,15 @@ export default function BookmarkViewer() {
 
   const loadBookmarks = useCallback(
     async (mode: "cache" | "refresh" | "more") => {
-      setLoading(true);
+      if (refreshDoneTimerRef.current) {
+        clearTimeout(refreshDoneTimerRef.current);
+        refreshDoneTimerRef.current = null;
+      }
+      setLoadingMode(mode);
       setError(null);
+      if (mode === "refresh") {
+        setRefreshSucceeded(false);
+      }
 
       const params = new URLSearchParams();
       if (mode === "refresh") {
@@ -79,8 +91,16 @@ export default function BookmarkViewer() {
         setItems((current) => (mode === "more" ? [...current, ...payload.items] : payload.items));
         nextTokenRef.current = payload.nextToken;
         setNextToken(payload.nextToken);
+        setLastSource(payload.source ?? null);
         setEstimatedMonthlyCostUsd(payload.estimatedMonthlyCostUsd ?? null);
         setUndoTweet(null);
+        if (mode === "refresh") {
+          setRefreshSucceeded(true);
+          refreshDoneTimerRef.current = setTimeout(() => {
+            setRefreshSucceeded(false);
+            refreshDoneTimerRef.current = null;
+          }, 2400);
+        }
       } catch (caught) {
         const code = caught instanceof Error ? caught.message : "BOOKMARK_FETCH_FAILED";
         setError(ERROR_MESSAGES[code] ?? ERROR_MESSAGES.BOOKMARK_FETCH_FAILED);
@@ -88,7 +108,7 @@ export default function BookmarkViewer() {
           setAuth("anonymous");
         }
       } finally {
-        setLoading(false);
+        setLoadingMode(null);
       }
     },
     []
@@ -123,6 +143,14 @@ export default function BookmarkViewer() {
       cancelled = true;
     };
   }, [loadBookmarks]);
+
+  useEffect(() => {
+    return () => {
+      if (refreshDoneTimerRef.current) {
+        clearTimeout(refreshDoneTimerRef.current);
+      }
+    };
+  }, []);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -192,6 +220,10 @@ export default function BookmarkViewer() {
   }
 
   const version = packageJson.version ?? "0.0.0";
+  const loading = loadingMode !== null;
+  const refreshLoading = loadingMode === "refresh";
+  const sourceLabel =
+    lastSource === "x" ? "X APIから取得済み" : lastSource === "cache" ? "ローカルキャッシュを表示中" : null;
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-[760px] px-6 py-8">
@@ -201,6 +233,7 @@ export default function BookmarkViewer() {
             <h1 className="text-lg font-semibold text-white">X Bookmark Viewer</h1>
             <p className="text-sm text-quiet">ブックマーク専用</p>
             <p className="text-xs text-slate-400">v{version}</p>
+            {sourceLabel ? <p className="text-xs text-sky-200">{sourceLabel}</p> : null}
             {estimatedMonthlyCostUsd !== null ? (
               <p className="text-xs text-slate-400">X API今月概算 ${estimatedMonthlyCostUsd.toFixed(3)}</p>
             ) : null}
@@ -212,7 +245,38 @@ export default function BookmarkViewer() {
               onClick={() => loadBookmarks("refresh")}
               disabled={loading}
             >
-              更新
+              <span className="flex min-w-[5.5rem] items-center justify-center gap-2">
+                {refreshLoading ? (
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                      fill="none"
+                    />
+                    <path
+                      className="opacity-90"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"
+                    />
+                  </svg>
+                ) : refreshSucceeded ? (
+                  <svg className="h-4 w-4 text-emerald-300" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="none"
+                      stroke="currentColor"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="3"
+                      d="M20 6 9 17l-5-5"
+                    />
+                  </svg>
+                ) : null}
+                {refreshLoading ? "更新中" : refreshSucceeded ? "更新済み" : "更新"}
+              </span>
             </button>
             <button
               type="button"
@@ -223,6 +287,11 @@ export default function BookmarkViewer() {
             </button>
           </div>
         </div>
+        {refreshLoading ? (
+          <div className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-line">
+            <div className="h-full w-1/3 animate-[refresh-progress_1.1s_ease-in-out_infinite] bg-sky-400" />
+          </div>
+        ) : null}
       </header>
 
       {error ? (

@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.2.1 - 2026-05-28
+
+- Feature: Show refresh progress with a spinner, progress bar, and temporary success checkmark.
+- Feature: Display whether the current bookmark list came from X API or the local cache.
+- Docs: Document the local development policy to keep the app on port 8080.
+
+## v1.2.0 - 2026-05-28
+
+- Security: Ignore all `.env*` files while keeping `.env.example` tracked.
+- Security: Stop exposing OAuth failure details in redirect URLs and server logs.
+- Security: Disable external translation by default; require `ENABLE_EXTERNAL_TRANSLATION=1` to send post text to translation services.
+- Safety: Require authentication before saving local bookmark notes.
+- Safety: Preserve local notes when removing a bookmark from X, reducing rollback/Undo impact.
+- Feature: Add DB backup and restore scripts.
+- Docs: Add security, rollback, DB handling, and operation guidance.
+
 ## v1.1.1 - 2026-05-27
 
 - Fix: Proxy X video media through `/api/media/video` so bookmark videos can play reliably.

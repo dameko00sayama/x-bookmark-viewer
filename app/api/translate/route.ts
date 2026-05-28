@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
+  if (process.env.ENABLE_EXTERNAL_TRANSLATION !== "1") {
+    return NextResponse.json({ error: "EXTERNAL_TRANSLATION_DISABLED" }, { status: 403 });
+  }
+
   try {
     const body = await request.json();
     const text = body.text ?? "";
