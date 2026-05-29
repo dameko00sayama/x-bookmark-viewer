@@ -12,11 +12,13 @@ type BookmarkResponse = {
   nextToken: string | null;
   source?: "cache" | "x";
   estimatedMonthlyCostUsd?: number;
+  syncedCount?: number;
+  unbookmarkedCount?: number;
   error?: string;
 };
 
 type AuthState = "checking" | "anonymous" | "authenticated";
-type LoadingMode = "cache" | "refresh" | "more";
+type LoadingMode = "cache" | "refresh" | "sync" | "more";
 
 const ERROR_MESSAGES: Record<string, string> = {
   AUTH_REQUIRED: "認証が切れています。再ログインしてください。",
@@ -25,6 +27,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   RATE_LIMITED: "X APIの制限に達しました。しばらく待ってから更新してください。",
   X_API_FAILED: "X APIの取得に失敗しました。",
   BOOKMARK_FETCH_FAILED: "ブックマークの取得に失敗しました。",
+  BOOKMARK_SYNC_FAILED: "ブックマークの同期に失敗しました。",
   BOOKMARK_OPERATION_FAILED: "ブックマーク操作に失敗しました。",
   BUDGET_EXCEEDED: "今月のX API予算上限に達しそうなので、ローカルキャッシュだけ表示しています。",
   oauth_state: "OAuth認証を安全に完了できませんでした。もう一度ログインしてください。",
@@ -40,6 +43,8 @@ export default function BookmarkViewer() {
   const [error, setError] = useState<string | null>(null);
   const [lastSource, setLastSource] = useState<BookmarkResponse["source"] | null>(null);
   const [refreshSucceeded, setRefreshSucceeded] = useState(false);
+  const [syncSucceeded, setSyncSucceeded] = useState(false);
+  const [syncSummary, setSyncSummary] = useState<string | null>(null);
   const [estimatedMonthlyCostUsd, setEstimatedMonthlyCostUsd] = useState<number | null>(null);
   const [modalImage, setModalImage] = useState<{ url: string; altText: string | null } | null>(null);
   const [undoTweet, setUndoTweet] = useState<BookmarkTweet | null>(null);
@@ -71,6 +76,7 @@ export default function BookmarkViewer() {
       if (mode === "refresh") {
         setRefreshSucceeded(false);
       }
+      setSyncSummary(null);
 
       const params = new URLSearchParams();
       if (mode === "refresh") {
@@ -113,6 +119,57 @@ export default function BookmarkViewer() {
     },
     []
   );
+
+  async function syncBookmarks() {
+    const ok = window.confirm(
+      "X側のブックマーク全体を取得して同期します。件数に応じてX API料金が発生する可能性があります。実行しますか？"
+    );
+    if (!ok) {
+      return;
+    }
+
+    if (refreshDoneTimerRef.current) {
+      clearTimeout(refreshDoneTimerRef.current);
+      refreshDoneTimerRef.current = null;
+    }
+
+    setLoadingMode("sync");
+    setError(null);
+    setSyncSucceeded(false);
+    setSyncSummary(null);
+
+    try {
+      const response = await fetch("/api/bookmarks/sync", { method: "POST" });
+      const payload = (await response.json()) as BookmarkResponse;
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "BOOKMARK_SYNC_FAILED");
+      }
+
+      setItems(payload.items);
+      nextTokenRef.current = payload.nextToken;
+      setNextToken(payload.nextToken);
+      setLastSource(payload.source ?? null);
+      setEstimatedMonthlyCostUsd(payload.estimatedMonthlyCostUsd ?? null);
+      setUndoTweet(null);
+      setSyncSummary(
+        `${payload.syncedCount ?? 0}件を確認、${payload.unbookmarkedCount ?? 0}件を解除済みにしました。`
+      );
+      setSyncSucceeded(true);
+      refreshDoneTimerRef.current = setTimeout(() => {
+        setSyncSucceeded(false);
+        refreshDoneTimerRef.current = null;
+      }, 2400);
+    } catch (caught) {
+      const code = caught instanceof Error ? caught.message : "BOOKMARK_SYNC_FAILED";
+      setError(ERROR_MESSAGES[code] ?? ERROR_MESSAGES.BOOKMARK_SYNC_FAILED);
+      if (code === "AUTH_REQUIRED") {
+        setAuth("anonymous");
+      }
+    } finally {
+      setLoadingMode(null);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -222,6 +279,7 @@ export default function BookmarkViewer() {
   const version = packageJson.version ?? "0.0.0";
   const loading = loadingMode !== null;
   const refreshLoading = loadingMode === "refresh";
+  const syncLoading = loadingMode === "sync";
   const sourceLabel =
     lastSource === "x" ? "X APIから取得済み" : lastSource === "cache" ? "ローカルキャッシュを表示中" : null;
 
@@ -238,7 +296,7 @@ export default function BookmarkViewer() {
               <p className="text-xs text-slate-400">X API今月概算 ${estimatedMonthlyCostUsd.toFixed(3)}</p>
             ) : null}
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap justify-end gap-3">
             <button
               type="button"
               className="rounded-md border border-line px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-panel"
@@ -275,7 +333,46 @@ export default function BookmarkViewer() {
                     />
                   </svg>
                 ) : null}
-                {refreshLoading ? "更新中" : refreshSucceeded ? "更新済み" : "更新"}
+                {refreshLoading ? "取得中" : refreshSucceeded ? "取得済み" : "取得"}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-line px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-panel"
+              onClick={syncBookmarks}
+              disabled={loading}
+            >
+              <span className="flex min-w-[5.5rem] items-center justify-center gap-2">
+                {syncLoading ? (
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                      fill="none"
+                    />
+                    <path
+                      className="opacity-90"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z"
+                    />
+                  </svg>
+                ) : syncSucceeded ? (
+                  <svg className="h-4 w-4 text-emerald-300" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      fill="none"
+                      stroke="currentColor"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="3"
+                      d="M20 6 9 17l-5-5"
+                    />
+                  </svg>
+                ) : null}
+                {syncLoading ? "同期中" : syncSucceeded ? "同期済み" : "同期"}
               </span>
             </button>
             <button
@@ -287,7 +384,7 @@ export default function BookmarkViewer() {
             </button>
           </div>
         </div>
-        {refreshLoading ? (
+        {refreshLoading || syncLoading ? (
           <div className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden bg-line">
             <div className="h-full w-1/3 animate-[refresh-progress_1.1s_ease-in-out_infinite] bg-sky-400" />
           </div>
@@ -297,6 +394,12 @@ export default function BookmarkViewer() {
       {error ? (
         <div className="mb-5 rounded-md border border-red-400/40 bg-red-950/40 p-4 text-sm text-red-100">
           {error}
+        </div>
+      ) : null}
+
+      {syncSummary ? (
+        <div className="mb-5 rounded-md border border-sky-400/40 bg-sky-950/30 p-4 text-sm text-sky-100">
+          {syncSummary}
         </div>
       ) : null}
 

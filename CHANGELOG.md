@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.4.0 - 2026-05-29
+
+- Feature: Rename the header refresh action to "取得" to reflect that it only fetches the latest page.
+- Feature: Add a confirmed "同期" action that fetches all X bookmark pages and marks locally cached items missing from X as unbookmarked.
+- Feature: Track X bookmark state locally so unbookmarked cached tweets can be hidden without deleting local data.
+- Chore: Bump app version to v1.4.0.
+
 ## v1.3.1 - 2026-05-29
 
 - Feature: Add a persistent local collapsed state for bookmark cards.

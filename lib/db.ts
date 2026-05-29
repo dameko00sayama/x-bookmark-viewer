@@ -22,6 +22,13 @@ const dbPath = path.join(dataDir, "app.sqlite");
 
 let db: Database.Database | null = null;
 
+function ensureColumn(db: Database.Database, table: string, column: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((item) => item.name === column)) {
+    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+  }
+}
+
 function getDb() {
   if (!db) {
     fs.mkdirSync(dataDir, { recursive: true });
@@ -86,6 +93,10 @@ function getDb() {
         updated_at INTEGER NOT NULL
       );
     `);
+
+    ensureColumn(db, "cached_bookmark_tweets", "x_bookmarked", "INTEGER NOT NULL DEFAULT 1");
+    ensureColumn(db, "cached_bookmark_tweets", "last_seen_on_x_at", "INTEGER");
+    ensureColumn(db, "cached_bookmark_tweets", "unbookmarked_at", "INTEGER");
   }
 
   return db;
@@ -211,7 +222,7 @@ export function setSetting(key: string, value: string | null) {
 
 export function getCachedBookmarkCount() {
   const row = getDb()
-    .prepare("SELECT COUNT(*) AS count FROM cached_bookmark_tweets")
+    .prepare("SELECT COUNT(*) AS count FROM cached_bookmark_tweets WHERE x_bookmarked = 1")
     .get() as { count: number };
   return row.count;
 }
@@ -228,6 +239,7 @@ export function getCachedBookmarkPage(offset = 0, limit = 50): CachedBookmarkPag
       FROM cached_bookmark_tweets
       LEFT JOIN bookmark_notes ON bookmark_notes.tweet_id = cached_bookmark_tweets.tweet_id
       LEFT JOIN bookmark_view_states ON bookmark_view_states.tweet_id = cached_bookmark_tweets.tweet_id
+      WHERE cached_bookmark_tweets.x_bookmarked = 1
       ORDER BY cached_bookmark_tweets.sort_order ASC, cached_bookmark_tweets.cached_at DESC
       LIMIT ? OFFSET ?
     `
@@ -288,13 +300,25 @@ export function saveCachedBookmarkPage(items: BookmarkTweet[], offset: number, n
 
     const statement = db.prepare(
       `
-      INSERT INTO cached_bookmark_tweets (tweet_id, payload, sort_order, cached_at, updated_at)
-      VALUES (@tweetId, @payload, @sortOrder, @cachedAt, @updatedAt)
+      INSERT INTO cached_bookmark_tweets (
+        tweet_id,
+        payload,
+        sort_order,
+        cached_at,
+        updated_at,
+        x_bookmarked,
+        last_seen_on_x_at,
+        unbookmarked_at
+      )
+      VALUES (@tweetId, @payload, @sortOrder, @cachedAt, @updatedAt, 1, @cachedAt, NULL)
       ON CONFLICT(tweet_id) DO UPDATE SET
         payload = excluded.payload,
         sort_order = excluded.sort_order,
         cached_at = excluded.cached_at,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        x_bookmarked = 1,
+        last_seen_on_x_at = excluded.cached_at,
+        unbookmarked_at = NULL
     `
     );
 
@@ -314,6 +338,100 @@ export function saveCachedBookmarkPage(items: BookmarkTweet[], offset: number, n
   return applyLocalBookmarkState(items.map((item) => ({ ...item, cachedAt: new Date(now).toISOString() })));
 }
 
+export function saveSyncedBookmarkPage(items: BookmarkTweet[], offset: number, nextXToken: string | null) {
+  const now = Date.now();
+  const db = getDb();
+
+  db.transaction(() => {
+    const statement = db.prepare(
+      `
+      INSERT INTO cached_bookmark_tweets (
+        tweet_id,
+        payload,
+        sort_order,
+        cached_at,
+        updated_at,
+        x_bookmarked,
+        last_seen_on_x_at,
+        unbookmarked_at
+      )
+      VALUES (@tweetId, @payload, @sortOrder, @cachedAt, @updatedAt, 1, @cachedAt, NULL)
+      ON CONFLICT(tweet_id) DO UPDATE SET
+        payload = excluded.payload,
+        sort_order = excluded.sort_order,
+        cached_at = excluded.cached_at,
+        updated_at = excluded.updated_at,
+        x_bookmarked = 1,
+        last_seen_on_x_at = excluded.last_seen_on_x_at,
+        unbookmarked_at = NULL
+    `
+    );
+
+    items.forEach((item, index) => {
+      statement.run({
+        tweetId: item.id,
+        payload: JSON.stringify(item),
+        sortOrder: offset + index,
+        cachedAt: now,
+        updatedAt: now
+      });
+    });
+
+    setSetting("bookmarks_next_x_token", nextXToken);
+  })();
+
+  return applyLocalBookmarkState(items.map((item) => ({ ...item, cachedAt: new Date(now).toISOString() })));
+}
+
+export function markBookmarksNotSeenOnX(seenTweetIds: string[]) {
+  const now = Date.now();
+  const db = getDb();
+  const uniqueIds = [...new Set(seenTweetIds)].filter(Boolean);
+
+  return db.transaction(() => {
+    db.prepare("CREATE TEMP TABLE IF NOT EXISTS synced_bookmark_ids (tweet_id TEXT PRIMARY KEY)").run();
+    db.prepare("DELETE FROM synced_bookmark_ids").run();
+
+    const insert = db.prepare("INSERT OR IGNORE INTO synced_bookmark_ids (tweet_id) VALUES (?)");
+    uniqueIds.forEach((tweetId) => insert.run(tweetId));
+
+    const result = db
+      .prepare(
+        `
+        UPDATE cached_bookmark_tweets
+        SET x_bookmarked = 0,
+            unbookmarked_at = COALESCE(unbookmarked_at, ?),
+            updated_at = ?
+        WHERE x_bookmarked = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM synced_bookmark_ids
+            WHERE synced_bookmark_ids.tweet_id = cached_bookmark_tweets.tweet_id
+          )
+      `
+      )
+      .run(now, now);
+
+    db.prepare("DELETE FROM synced_bookmark_ids").run();
+    return result.changes;
+  })();
+}
+
+export function markBookmarkXState(tweetId: string, xBookmarked: boolean) {
+  const now = Date.now();
+  getDb()
+    .prepare(
+      `
+      UPDATE cached_bookmark_tweets
+      SET x_bookmarked = ?,
+          last_seen_on_x_at = CASE WHEN ? = 1 THEN ? ELSE last_seen_on_x_at END,
+          unbookmarked_at = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(unbookmarked_at, ?) END,
+          updated_at = ?
+      WHERE tweet_id = ?
+    `
+    )
+    .run(xBookmarked ? 1 : 0, xBookmarked ? 1 : 0, now, xBookmarked ? 1 : 0, now, now, tweetId);
+}
+
 export function saveCachedTweet(tweet: BookmarkTweet) {
   const now = Date.now();
   getDb()
@@ -324,7 +442,10 @@ export function saveCachedTweet(tweet: BookmarkTweet) {
       ON CONFLICT(tweet_id) DO UPDATE SET
         payload = excluded.payload,
         cached_at = excluded.cached_at,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        x_bookmarked = 1,
+        last_seen_on_x_at = excluded.cached_at,
+        unbookmarked_at = NULL
     `
     )
     .run({

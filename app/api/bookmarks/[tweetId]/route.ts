@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { markBookmarkXState } from "@/lib/db";
 import { addBookmark, AuthRequiredError, removeBookmark, XApiError } from "@/lib/x-api";
 
 type Context = {
@@ -24,6 +25,7 @@ export async function DELETE(_request: NextRequest, context: Context) {
 
   try {
     await removeBookmark(tweetId);
+    markBookmarkXState(tweetId, false);
     return NextResponse.json({ ok: true });
   } catch (error) {
     return toErrorResponse(error);
@@ -35,6 +37,7 @@ export async function POST(_request: NextRequest, context: Context) {
 
   try {
     await addBookmark(tweetId);
+    markBookmarkXState(tweetId, true);
     return NextResponse.json({ ok: true });
   } catch (error) {
     return toErrorResponse(error);
