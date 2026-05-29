@@ -23,6 +23,21 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatFetchedAt(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(new Date(value));
+}
+
 function tweetUrl(tweet: Pick<BookmarkTweet, "id" | "author">) {
   const username = tweet.author?.username ?? "i";
   return `https://x.com/${username}/status/${tweet.id}`;
@@ -62,6 +77,10 @@ function linkedText(text: string) {
   }
 
   return nodes;
+}
+
+function firstLine(text: string) {
+  return text.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "";
 }
 
 type VideoMediaProps = {
@@ -134,6 +153,7 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
   const [localTweet, setLocalTweet] = useState<BookmarkTweet>(tweet);
   const [trans, setTrans] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [collapsed, setCollapsed] = useState(tweet.collapsed);
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState(tweet.note ?? "");
   const [savingNote, setSavingNote] = useState(false);
@@ -151,6 +171,7 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
   };
   const isTruncated = isProbablyTruncated(localTweet.text);
   const previewText = isTruncated ? `${localTweet.text.slice(0, 140)}...` : localTweet.text;
+  const fetchedAt = formatFetchedAt(localTweet.cachedAt);
 
   async function loadFull(expandThread = false) {
     try {
@@ -161,9 +182,31 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
         return;
       }
       const payload = await resp.json();
-      setLocalTweet(payload);
+      setLocalTweet((current) => ({ ...payload, note: current.note, collapsed: current.collapsed }));
     } finally {
       setLoadingFull(false);
+    }
+  }
+
+  async function saveCollapsed(nextCollapsed: boolean) {
+    const previous = collapsed;
+    setCollapsed(nextCollapsed);
+    setExpanded(false);
+    setNoteOpen(false);
+    setLocalTweet((current) => ({ ...current, collapsed: nextCollapsed }));
+
+    try {
+      const response = await fetch(`/api/bookmarks/${localTweet.id}/collapsed`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collapsed: nextCollapsed })
+      });
+      if (!response.ok) {
+        throw new Error("COLLAPSE_SAVE_FAILED");
+      }
+    } catch {
+      setCollapsed(previous);
+      setLocalTweet((current) => ({ ...current, collapsed: previous }));
     }
   }
 
@@ -206,6 +249,33 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
     } finally {
       setSavingNote(false);
     }
+  }
+
+  if (collapsed) {
+    return (
+      <article className="rounded-lg border border-line bg-panel px-5 py-4 transition hover:border-slate-500">
+        <div className="flex items-start gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-white">
+              {localTweet.author?.name ?? "Unknown"}{" "}
+              <span className="whitespace-nowrap text-quiet">
+                (@{localTweet.author?.username ?? localTweet.author?.id ?? "unknown"})
+              </span>
+            </div>
+            <p className="mt-2 line-clamp-1 text-sm leading-6 text-slate-200">
+              {firstLine(localTweet.text) || "本文なし"}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 rounded-md border border-line px-4 py-2 text-sm font-semibold text-slate-100 transition hover:bg-ink"
+            onClick={() => saveCollapsed(false)}
+          >
+            開く
+          </button>
+        </div>
+      </article>
+    );
   }
 
   return (
@@ -324,7 +394,15 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
         </button>
       ) : null}
 
-      <div className="mt-5 flex justify-end gap-3" onClick={(event) => event.stopPropagation()}>
+      <div className="mt-5 flex flex-wrap items-center justify-end gap-3" onClick={(event) => event.stopPropagation()}>
+        {fetchedAt ? <p className="mr-auto text-xs text-slate-500">取得: {fetchedAt}</p> : null}
+        <button
+          type="button"
+          className="rounded-md border border-line px-4 py-2 text-sm font-semibold text-slate-100 transition hover:bg-ink"
+          onClick={() => saveCollapsed(true)}
+        >
+          畳む
+        </button>
         <button
           type="button"
           className="rounded-md border border-line px-4 py-2 text-sm font-semibold text-slate-100 transition hover:bg-ink"

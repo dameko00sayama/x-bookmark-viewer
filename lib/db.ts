@@ -79,6 +79,12 @@ function getDb() {
         note TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS bookmark_view_states (
+        tweet_id TEXT PRIMARY KEY,
+        collapsed INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
     `);
   }
 
@@ -214,21 +220,61 @@ export function getCachedBookmarkPage(offset = 0, limit = 50): CachedBookmarkPag
   const rows = getDb()
     .prepare(
       `
-      SELECT cached_bookmark_tweets.payload, bookmark_notes.note
+      SELECT
+        cached_bookmark_tweets.payload,
+        cached_bookmark_tweets.cached_at,
+        bookmark_notes.note,
+        bookmark_view_states.collapsed
       FROM cached_bookmark_tweets
       LEFT JOIN bookmark_notes ON bookmark_notes.tweet_id = cached_bookmark_tweets.tweet_id
+      LEFT JOIN bookmark_view_states ON bookmark_view_states.tweet_id = cached_bookmark_tweets.tweet_id
       ORDER BY cached_bookmark_tweets.sort_order ASC, cached_bookmark_tweets.cached_at DESC
       LIMIT ? OFFSET ?
     `
     )
-    .all(limit, offset) as { payload: string; note: string | null }[];
+    .all(limit, offset) as { payload: string; cached_at: number; note: string | null; collapsed: number | null }[];
 
   const total = getCachedBookmarkCount();
 
   return {
-    items: rows.map((row) => ({ ...(JSON.parse(row.payload) as BookmarkTweet), note: row.note })),
+    items: rows.map((row) => ({
+      ...(JSON.parse(row.payload) as BookmarkTweet),
+      cachedAt: new Date(row.cached_at).toISOString(),
+      note: row.note,
+      collapsed: row.collapsed === 1
+    })),
     nextToken: offset + rows.length < total ? `cache:${offset + rows.length}` : null
   };
+}
+
+export function applyLocalBookmarkState(items: BookmarkTweet[]) {
+  if (items.length === 0) {
+    return items;
+  }
+
+  const ids = items.map((item) => item.id);
+  const placeholders = ids.map(() => "?").join(", ");
+  const rows = getDb()
+    .prepare(
+      `
+      SELECT cached_bookmark_tweets.tweet_id, bookmark_notes.note, bookmark_view_states.collapsed
+      FROM cached_bookmark_tweets
+      LEFT JOIN bookmark_notes ON bookmark_notes.tweet_id = cached_bookmark_tweets.tweet_id
+      LEFT JOIN bookmark_view_states ON bookmark_view_states.tweet_id = cached_bookmark_tweets.tweet_id
+      WHERE cached_bookmark_tweets.tweet_id IN (${placeholders})
+    `
+    )
+    .all(...ids) as { tweet_id: string; note: string | null; collapsed: number | null }[];
+
+  const stateById = new Map(rows.map((row) => [row.tweet_id, row]));
+  return items.map((item) => {
+    const state = stateById.get(item.id);
+    return {
+      ...item,
+      note: state?.note ?? item.note,
+      collapsed: state?.collapsed === 1
+    };
+  });
 }
 
 export function saveCachedBookmarkPage(items: BookmarkTweet[], offset: number, nextXToken: string | null) {
@@ -247,6 +293,7 @@ export function saveCachedBookmarkPage(items: BookmarkTweet[], offset: number, n
       ON CONFLICT(tweet_id) DO UPDATE SET
         payload = excluded.payload,
         sort_order = excluded.sort_order,
+        cached_at = excluded.cached_at,
         updated_at = excluded.updated_at
     `
     );
@@ -263,6 +310,8 @@ export function saveCachedBookmarkPage(items: BookmarkTweet[], offset: number, n
 
     setSetting("bookmarks_next_x_token", nextXToken);
   })();
+
+  return applyLocalBookmarkState(items.map((item) => ({ ...item, cachedAt: new Date(now).toISOString() })));
 }
 
 export function saveCachedTweet(tweet: BookmarkTweet) {
@@ -274,6 +323,7 @@ export function saveCachedTweet(tweet: BookmarkTweet) {
       VALUES (@tweetId, @payload, COALESCE((SELECT sort_order FROM cached_bookmark_tweets WHERE tweet_id = @tweetId), 0), @cachedAt, @updatedAt)
       ON CONFLICT(tweet_id) DO UPDATE SET
         payload = excluded.payload,
+        cached_at = excluded.cached_at,
         updated_at = excluded.updated_at
     `
     )
@@ -283,6 +333,8 @@ export function saveCachedTweet(tweet: BookmarkTweet) {
       cachedAt: now,
       updatedAt: now
     });
+
+  return applyLocalBookmarkState([{ ...tweet, cachedAt: new Date(now).toISOString() }])[0];
 }
 
 export function saveBookmarkNote(tweetId: string, note: string) {
@@ -307,6 +359,20 @@ export function saveBookmarkNote(tweetId: string, note: string) {
 
 export function deleteBookmarkNote(tweetId: string) {
   getDb().prepare("DELETE FROM bookmark_notes WHERE tweet_id = ?").run(tweetId);
+}
+
+export function saveBookmarkCollapsed(tweetId: string, collapsed: boolean) {
+  getDb()
+    .prepare(
+      `
+      INSERT INTO bookmark_view_states (tweet_id, collapsed, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(tweet_id) DO UPDATE SET
+        collapsed = excluded.collapsed,
+        updated_at = excluded.updated_at
+    `
+    )
+    .run(tweetId, collapsed ? 1 : 0, Date.now());
 }
 
 export function recordApiUsage(operation: string, resources: number, estimatedCostUsd: number) {

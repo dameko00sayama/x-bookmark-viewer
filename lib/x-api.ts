@@ -32,9 +32,11 @@ export type BookmarkTweet = {
   id: string;
   text: string;
   createdAt: string | null;
+  cachedAt?: string | null;
   author: BookmarkAuthor | null;
   media: BookmarkMedia[];
   note: string | null;
+  collapsed: boolean;
   quotedTweet: QuotedBookmarkTweet | null;
 };
 
@@ -505,6 +507,7 @@ function normalizeBookmarks(payload: any): BookmarkPage {
       author: tweet.author_id ? users.get(tweet.author_id) ?? null : null,
       media: mediaKeys.map((key: string) => media.get(key)).filter(Boolean),
       note: null,
+      collapsed: false,
       quotedTweet: quoted
         ? {
             id: quoted.id,

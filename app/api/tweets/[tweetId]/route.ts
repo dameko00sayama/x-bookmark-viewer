@@ -13,8 +13,7 @@ export async function GET(_request: NextRequest, context: Context) {
 
   try {
     const tweet = await fetchTweet(tweetId, expand === "thread");
-    saveCachedTweet(tweet);
-    return NextResponse.json(tweet);
+    return NextResponse.json(saveCachedTweet(tweet));
   } catch (error) {
     if (error instanceof AuthRequiredError) {
       return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });

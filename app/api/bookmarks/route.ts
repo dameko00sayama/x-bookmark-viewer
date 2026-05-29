@@ -26,11 +26,11 @@ function nextTokenAfterCache(offset: number, itemCount: number) {
 
 async function fetchAndCacheXPage(paginationToken: string | null, offset: number) {
   const page = await fetchBookmarks(paginationToken);
-  saveCachedBookmarkPage(page.items, offset, page.nextToken);
+  const items = saveCachedBookmarkPage(page.items, offset, page.nextToken);
 
   return {
-    items: page.items,
-    nextToken: nextTokenAfterCache(offset, page.items.length),
+    items,
+    nextToken: nextTokenAfterCache(offset, items.length),
     source: "x",
     estimatedMonthlyCostUsd: getMonthlyEstimatedApiCost()
   };

@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.3.1 - 2026-05-29
+
+- Feature: Add a persistent local collapsed state for bookmark cards.
+- Feature: Show collapsed cards as only the account, first text line, and an open button.
+- Chore: Bump app version to v1.3.1.
+
+## v1.2.2 - 2026-05-29
+
+- Feature: Show each bookmark card's last fetched cache timestamp near the local note controls.
+- Fix: Update cached timestamps when bookmarks or full tweet details are refreshed.
+
 ## v1.2.1 - 2026-05-28
 
 - Feature: Show refresh progress with a spinner, progress bar, and temporary success checkmark.

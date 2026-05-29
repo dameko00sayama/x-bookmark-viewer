@@ -65,7 +65,7 @@ DATA_DIR=/app/data
 MONTHLY_X_API_BUDGET_USD=3
 ```
 
-`TOKEN_ENCRYPTION_KEY` は十分に長いランダム文字列、または32バイトのbase64文字列を指定してください。変更すると保存済みトークンを復号できなくなります。
+`TOKEN_ENCRYPTION_KEY` は十分に長いランダム文字列、または32バイトのbase64文字列を指定してください。変更すると保存済みトークンを復号できなくなるため、通常は初回設定後に変えないでください。変更が必要な場合は、先に `docs/運用手順.md` の注意点を確認してください。
 `MONTHLY_X_API_BUDGET_USD` はX APIの月次概算予算です。未設定の場合は `3` として扱います。
 
 `.env` を作成・変更した後は、コンテナを再作成してください。
@@ -127,4 +127,5 @@ docs/         仕様書とCodex投入プロンプト
 - `BILLING_REQUIRED` が出る: X APIがHTTP 402を返しています。Developer PortalでAPIアクセスプラン、支払い設定、対象Appの権限を確認してください。ブックマーク取得APIはXのOwned Reads課金対象です。
 - `RATE_LIMITED` が出る: X API制限に達しています。しばらく待ってから「更新」を押してください。
 - Docker起動に失敗する: `.env` が存在するか、`X_CLIENT_ID` と `TOKEN_ENCRYPTION_KEY` が設定されているか確認してください。
+- `TOKEN_ENCRYPTION_KEY` を変えた後にログイン状態がおかしい: 既存DB内の暗号化済みトークンを復号できなくなっています。元のキーに戻すか、DBをバックアップしたうえで保存済みログインを消して再ログインしてください。
 - 保存済みログインを消したい: `docker compose down -v` でvolumeを削除してください。
