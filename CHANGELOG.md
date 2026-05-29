@@ -4,6 +4,7 @@
 
 - Feature: Add a persistent local collapsed state for bookmark cards.
 - Feature: Show collapsed cards as only the account, first text line, and an open button.
+- Docs: Mark the collapsed-card requirement as implemented in the expansion notes.
 - Chore: Bump app version to v1.3.1.
 
 ## v1.2.2 - 2026-05-29
