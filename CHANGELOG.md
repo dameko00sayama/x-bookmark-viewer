@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.4.2 - 2026-06-01
+
+- Fix: Keep the bookmark removal undo notice visible outside the scrolling bookmark list.
+- Chore: Bump app version to v1.4.2.
+
 ## v1.4.1 - 2026-06-01
 
 - Feature: Show the configured X API charge total and cumulative estimated usage instead of a monthly estimate.

@@ -413,7 +413,7 @@ export default function BookmarkViewer() {
       ) : null}
 
       {undoTweet ? (
-        <div className="mb-5 flex items-center justify-between rounded-md border border-emerald-400/40 bg-emerald-950/30 p-4 text-sm text-emerald-100">
+        <div className="fixed bottom-6 left-1/2 z-30 flex w-[calc(100%-3rem)] max-w-[712px] -translate-x-1/2 items-center justify-between rounded-md border border-emerald-400/40 bg-emerald-950/95 p-4 text-sm text-emerald-100 shadow-lg backdrop-blur">
           <span>ブックマークを解除しました。</span>
           <button type="button" className="font-semibold underline" onClick={undoRemove}>
             元に戻す
