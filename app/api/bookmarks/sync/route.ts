@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import {
+  getActiveCachedBookmarkIds,
   getAuth,
   getCachedBookmarkPage,
-  getMonthlyEstimatedApiCost,
+  getEstimatedApiUsageUsd,
   markBookmarksNotSeenOnX,
   saveSyncedBookmarkPage
 } from "@/lib/db";
-import { AuthRequiredError, BudgetExceededError, fetchBookmarks, XApiError } from "@/lib/x-api";
+import { AuthRequiredError, BudgetExceededError, fetchBookmarks, getApiChargeUsd, XApiError } from "@/lib/x-api";
 
 const PAGE_SIZE = 50;
 
@@ -34,27 +35,38 @@ export async function POST() {
       throw new AuthRequiredError();
     }
 
+    const targetTweetIds = getActiveCachedBookmarkIds();
+    const targetTweetIdSet = new Set(targetTweetIds);
     const seenTweetIds: string[] = [];
     let nextXToken: string | null = null;
     let offset = 0;
 
-    do {
-      const page = await fetchBookmarks(nextXToken);
-      saveSyncedBookmarkPage(page.items, offset, page.nextToken);
-      seenTweetIds.push(...page.items.map((item) => item.id));
-      offset += page.items.length;
-      nextXToken = page.nextToken;
-    } while (nextXToken);
+    if (targetTweetIds.length > 0) {
+      do {
+        const page = await fetchBookmarks(nextXToken);
+        const targetItems = page.items.filter((item) => targetTweetIdSet.has(item.id));
 
-    const unbookmarkedCount = markBookmarksNotSeenOnX(seenTweetIds);
+        if (targetItems.length > 0) {
+          saveSyncedBookmarkPage(targetItems, offset);
+          seenTweetIds.push(...targetItems.map((item) => item.id));
+          offset += targetItems.length;
+        }
+
+        nextXToken = page.nextToken;
+      } while (nextXToken && seenTweetIds.length < targetTweetIds.length);
+    }
+
+    const unbookmarkedCount = markBookmarksNotSeenOnX(seenTweetIds, targetTweetIds);
     const page = getCachedBookmarkPage(0, PAGE_SIZE);
 
     return NextResponse.json({
       ...page,
       source: "x",
       syncedCount: seenTweetIds.length,
+      syncTargetCount: targetTweetIds.length,
       unbookmarkedCount,
-      estimatedMonthlyCostUsd: getMonthlyEstimatedApiCost()
+      apiChargeUsd: getApiChargeUsd(),
+      estimatedApiUsageUsd: getEstimatedApiUsageUsd()
     });
   } catch (error) {
     return toErrorResponse(error);

@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import {
   getAuth,
-  getMonthlyEstimatedApiCost,
+  getEstimatedApiUsageUsd,
   recordApiUsageForResources,
   saveAuth,
   type StoredAuth
@@ -91,13 +91,13 @@ export function createCodeChallenge(verifier: string) {
   return createHash("sha256").update(verifier).digest("base64url");
 }
 
-function getMonthlyBudgetUsd() {
-  const value = Number(process.env.MONTHLY_X_API_BUDGET_USD ?? "3");
-  return Number.isFinite(value) && value > 0 ? value : 3;
+export function getApiChargeUsd() {
+  const value = Number(process.env.X_API_CHARGE_USD ?? "5");
+  return Number.isFinite(value) && value > 0 ? value : 5;
 }
 
-function assertWithinMonthlyBudget(estimatedCostUsd: number) {
-  if (getMonthlyEstimatedApiCost() + estimatedCostUsd > getMonthlyBudgetUsd()) {
+function assertWithinApiCharge(estimatedCostUsd: number) {
+  if (getEstimatedApiUsageUsd() + estimatedCostUsd > getApiChargeUsd()) {
     throw new BudgetExceededError();
   }
 }
@@ -225,7 +225,7 @@ export class XApiError extends Error {
 
 export class BudgetExceededError extends Error {
   constructor() {
-    super("Monthly X API budget would be exceeded");
+    super("X API charge would be exceeded");
     this.name = "BudgetExceededError";
   }
 }
@@ -317,7 +317,7 @@ export async function fetchMe(accessToken: string): Promise<{ id: string; name: 
 }
 
 export async function fetchBookmarks(paginationToken?: string | null): Promise<BookmarkPage> {
-  assertWithinMonthlyBudget(50 * OWNED_READ_COST_USD);
+  assertWithinApiCharge(50 * OWNED_READ_COST_USD);
   const auth = await getValidAuth();
   const url = new URL(`${X_API_BASE}/2/users/${auth.userId}/bookmarks`);
   url.searchParams.set("max_results", "50");
@@ -339,7 +339,7 @@ export async function fetchBookmarks(paginationToken?: string | null): Promise<B
 }
 
 export async function fetchTweet(tweetId: string, expandThread = false): Promise<BookmarkTweet> {
-  assertWithinMonthlyBudget((expandThread ? 101 : 1) * OWNED_READ_COST_USD);
+  assertWithinApiCharge((expandThread ? 101 : 1) * OWNED_READ_COST_USD);
   const auth = await getValidAuth();
   const url = new URL(`${X_API_BASE}/2/tweets/${tweetId}`);
   url.searchParams.set("tweet.fields", FULL_TWEET_FIELDS);

@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.1 - 2026-06-01
+
+- Feature: Show the configured X API charge total and cumulative estimated usage instead of a monthly estimate.
+- Feature: Keep estimated X API usage cumulative across month boundaries and allow an environment-configured usage offset.
+- Fix: Limit bookmark synchronization to locally cached items and report the checked target count.
+- Style: Make collapsed bookmark cards visually quieter than expanded cards.
+- Chore: Bump app version to v1.4.1.
+
 ## v1.4.0 - 2026-05-29
 
 - Feature: Rename the header refresh action to "取得" to reflect that it only fetches the latest page.

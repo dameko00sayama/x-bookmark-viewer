@@ -11,8 +11,10 @@ type BookmarkResponse = {
   items: BookmarkTweet[];
   nextToken: string | null;
   source?: "cache" | "x";
-  estimatedMonthlyCostUsd?: number;
+  apiChargeUsd?: number;
+  estimatedApiUsageUsd?: number;
   syncedCount?: number;
+  syncTargetCount?: number;
   unbookmarkedCount?: number;
   error?: string;
 };
@@ -29,7 +31,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   BOOKMARK_FETCH_FAILED: "ブックマークの取得に失敗しました。",
   BOOKMARK_SYNC_FAILED: "ブックマークの同期に失敗しました。",
   BOOKMARK_OPERATION_FAILED: "ブックマーク操作に失敗しました。",
-  BUDGET_EXCEEDED: "今月のX API予算上限に達しそうなので、ローカルキャッシュだけ表示しています。",
+  BUDGET_EXCEEDED: "X APIのチャージ総額を超えそうなので、ローカルキャッシュだけ表示しています。",
   oauth_state: "OAuth認証を安全に完了できませんでした。もう一度ログインしてください。",
   oauth_failed: "X OAuth認証に失敗しました。設定を確認して再ログインしてください。",
   missing_config: ".env の X_CLIENT_ID が未設定です。設定後に docker-compose up -d --build で再起動してください。"
@@ -45,7 +47,8 @@ export default function BookmarkViewer() {
   const [refreshSucceeded, setRefreshSucceeded] = useState(false);
   const [syncSucceeded, setSyncSucceeded] = useState(false);
   const [syncSummary, setSyncSummary] = useState<string | null>(null);
-  const [estimatedMonthlyCostUsd, setEstimatedMonthlyCostUsd] = useState<number | null>(null);
+  const [apiChargeUsd, setApiChargeUsd] = useState<number | null>(null);
+  const [estimatedApiUsageUsd, setEstimatedApiUsageUsd] = useState<number | null>(null);
   const [modalImage, setModalImage] = useState<{ url: string; altText: string | null } | null>(null);
   const [undoTweet, setUndoTweet] = useState<BookmarkTweet | null>(null);
   const nextTokenRef = useRef<string | null>(null);
@@ -98,7 +101,8 @@ export default function BookmarkViewer() {
         nextTokenRef.current = payload.nextToken;
         setNextToken(payload.nextToken);
         setLastSource(payload.source ?? null);
-        setEstimatedMonthlyCostUsd(payload.estimatedMonthlyCostUsd ?? null);
+        setApiChargeUsd(payload.apiChargeUsd ?? null);
+        setEstimatedApiUsageUsd(payload.estimatedApiUsageUsd ?? null);
         setUndoTweet(null);
         if (mode === "refresh") {
           setRefreshSucceeded(true);
@@ -122,7 +126,7 @@ export default function BookmarkViewer() {
 
   async function syncBookmarks() {
     const ok = window.confirm(
-      "X側のブックマーク全体を取得して同期します。件数に応じてX API料金が発生する可能性があります。実行しますか？"
+      "ローカルに取得済みのブックマークだけをX側と照合します。確認のためX API料金が発生する可能性があります。実行しますか？"
     );
     if (!ok) {
       return;
@@ -150,10 +154,13 @@ export default function BookmarkViewer() {
       nextTokenRef.current = payload.nextToken;
       setNextToken(payload.nextToken);
       setLastSource(payload.source ?? null);
-      setEstimatedMonthlyCostUsd(payload.estimatedMonthlyCostUsd ?? null);
+      setApiChargeUsd(payload.apiChargeUsd ?? null);
+      setEstimatedApiUsageUsd(payload.estimatedApiUsageUsd ?? null);
       setUndoTweet(null);
       setSyncSummary(
-        `${payload.syncedCount ?? 0}件を確認、${payload.unbookmarkedCount ?? 0}件を解除済みにしました。`
+        `取得済み${payload.syncTargetCount ?? 0}件中${payload.syncedCount ?? 0}件をX側で確認、${
+          payload.unbookmarkedCount ?? 0
+        }件を解除済みにしました。`
       );
       setSyncSucceeded(true);
       refreshDoneTimerRef.current = setTimeout(() => {
@@ -292,8 +299,10 @@ export default function BookmarkViewer() {
             <p className="text-sm text-quiet">ブックマーク専用</p>
             <p className="text-xs text-slate-400">v{version}</p>
             {sourceLabel ? <p className="text-xs text-sky-200">{sourceLabel}</p> : null}
-            {estimatedMonthlyCostUsd !== null ? (
-              <p className="text-xs text-slate-400">X API今月概算 ${estimatedMonthlyCostUsd.toFixed(3)}</p>
+            {apiChargeUsd !== null && estimatedApiUsageUsd !== null ? (
+              <p className="text-xs text-slate-400">
+                X APIチャージ / 使用量 ${apiChargeUsd} / ${estimatedApiUsageUsd.toFixed(2)}
+              </p>
             ) : null}
           </div>
           <div className="flex flex-wrap justify-end gap-3">

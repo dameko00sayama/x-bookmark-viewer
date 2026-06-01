@@ -227,6 +227,21 @@ export function getCachedBookmarkCount() {
   return row.count;
 }
 
+export function getActiveCachedBookmarkIds() {
+  const rows = getDb()
+    .prepare(
+      `
+      SELECT tweet_id
+      FROM cached_bookmark_tweets
+      WHERE x_bookmarked = 1
+      ORDER BY sort_order ASC, cached_at DESC
+    `
+    )
+    .all() as { tweet_id: string }[];
+
+  return rows.map((row) => row.tweet_id);
+}
+
 export function getCachedBookmarkPage(offset = 0, limit = 50): CachedBookmarkPage {
   const rows = getDb()
     .prepare(
@@ -338,7 +353,7 @@ export function saveCachedBookmarkPage(items: BookmarkTweet[], offset: number, n
   return applyLocalBookmarkState(items.map((item) => ({ ...item, cachedAt: new Date(now).toISOString() })));
 }
 
-export function saveSyncedBookmarkPage(items: BookmarkTweet[], offset: number, nextXToken: string | null) {
+export function saveSyncedBookmarkPage(items: BookmarkTweet[], offset: number) {
   const now = Date.now();
   const db = getDb();
 
@@ -376,24 +391,32 @@ export function saveSyncedBookmarkPage(items: BookmarkTweet[], offset: number, n
         updatedAt: now
       });
     });
-
-    setSetting("bookmarks_next_x_token", nextXToken);
   })();
 
   return applyLocalBookmarkState(items.map((item) => ({ ...item, cachedAt: new Date(now).toISOString() })));
 }
 
-export function markBookmarksNotSeenOnX(seenTweetIds: string[]) {
+export function markBookmarksNotSeenOnX(seenTweetIds: string[], targetTweetIds: string[]) {
   const now = Date.now();
   const db = getDb();
   const uniqueIds = [...new Set(seenTweetIds)].filter(Boolean);
+  const uniqueTargetIds = [...new Set(targetTweetIds)].filter(Boolean);
+
+  if (uniqueTargetIds.length === 0) {
+    return 0;
+  }
 
   return db.transaction(() => {
     db.prepare("CREATE TEMP TABLE IF NOT EXISTS synced_bookmark_ids (tweet_id TEXT PRIMARY KEY)").run();
+    db.prepare("CREATE TEMP TABLE IF NOT EXISTS sync_target_bookmark_ids (tweet_id TEXT PRIMARY KEY)").run();
     db.prepare("DELETE FROM synced_bookmark_ids").run();
+    db.prepare("DELETE FROM sync_target_bookmark_ids").run();
 
-    const insert = db.prepare("INSERT OR IGNORE INTO synced_bookmark_ids (tweet_id) VALUES (?)");
-    uniqueIds.forEach((tweetId) => insert.run(tweetId));
+    const insertSeen = db.prepare("INSERT OR IGNORE INTO synced_bookmark_ids (tweet_id) VALUES (?)");
+    uniqueIds.forEach((tweetId) => insertSeen.run(tweetId));
+
+    const insertTarget = db.prepare("INSERT OR IGNORE INTO sync_target_bookmark_ids (tweet_id) VALUES (?)");
+    uniqueTargetIds.forEach((tweetId) => insertTarget.run(tweetId));
 
     const result = db
       .prepare(
@@ -403,6 +426,10 @@ export function markBookmarksNotSeenOnX(seenTweetIds: string[]) {
             unbookmarked_at = COALESCE(unbookmarked_at, ?),
             updated_at = ?
         WHERE x_bookmarked = 1
+          AND EXISTS (
+            SELECT 1 FROM sync_target_bookmark_ids
+            WHERE sync_target_bookmark_ids.tweet_id = cached_bookmark_tweets.tweet_id
+          )
           AND NOT EXISTS (
             SELECT 1 FROM synced_bookmark_ids
             WHERE synced_bookmark_ids.tweet_id = cached_bookmark_tweets.tweet_id
@@ -412,6 +439,7 @@ export function markBookmarksNotSeenOnX(seenTweetIds: string[]) {
       .run(now, now);
 
     db.prepare("DELETE FROM synced_bookmark_ids").run();
+    db.prepare("DELETE FROM sync_target_bookmark_ids").run();
     return result.changes;
   })();
 }
@@ -546,11 +574,10 @@ export function recordApiUsageForResources(operation: string, resourceIds: strin
   return chargedResources;
 }
 
-export function getMonthlyEstimatedApiCost(now = Date.now()) {
-  const date = new Date(now);
-  const start = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+export function getEstimatedApiUsageUsd() {
   const row = getDb()
-    .prepare("SELECT COALESCE(SUM(estimated_cost_usd), 0) AS cost FROM api_usage WHERE occurred_at >= ?")
-    .get(start) as { cost: number };
-  return row.cost;
+    .prepare("SELECT COALESCE(SUM(estimated_cost_usd), 0) AS cost FROM api_usage")
+    .get() as { cost: number };
+  const offset = Number(process.env.X_API_USAGE_OFFSET_USD ?? "1.039");
+  return row.cost + (Number.isFinite(offset) && offset >= 0 ? offset : 1.039);
 }

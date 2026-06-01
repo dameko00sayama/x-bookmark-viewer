@@ -253,22 +253,22 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
 
   if (collapsed) {
     return (
-      <article className="rounded-lg border border-line bg-panel px-5 py-4 transition hover:border-slate-500">
+      <article className="rounded-lg border border-slate-800/70 bg-slate-900/45 px-5 py-4 opacity-85 transition hover:border-slate-600 hover:opacity-100">
         <div className="flex items-start gap-4">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-white">
+            <div className="text-sm font-semibold text-slate-300">
               {localTweet.author?.name ?? "Unknown"}{" "}
-              <span className="whitespace-nowrap text-quiet">
+              <span className="whitespace-nowrap text-slate-500">
                 (@{localTweet.author?.username ?? localTweet.author?.id ?? "unknown"})
               </span>
             </div>
-            <p className="mt-2 line-clamp-1 text-sm leading-6 text-slate-200">
+            <p className="mt-2 line-clamp-1 text-sm leading-6 text-slate-400">
               {firstLine(localTweet.text) || "本文なし"}
             </p>
           </div>
           <button
             type="button"
-            className="shrink-0 rounded-md border border-line px-4 py-2 text-sm font-semibold text-slate-100 transition hover:bg-ink"
+            className="shrink-0 rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800 hover:text-slate-100"
             onClick={() => saveCollapsed(false)}
           >
             開く

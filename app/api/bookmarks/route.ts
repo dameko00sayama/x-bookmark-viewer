@@ -3,11 +3,11 @@ import {
   getCachedBookmarkCount,
   getCachedBookmarkPage,
   getAuth,
-  getMonthlyEstimatedApiCost,
+  getEstimatedApiUsageUsd,
   getSetting,
   saveCachedBookmarkPage
 } from "@/lib/db";
-import { AuthRequiredError, BudgetExceededError, fetchBookmarks, XApiError } from "@/lib/x-api";
+import { AuthRequiredError, BudgetExceededError, fetchBookmarks, getApiChargeUsd, XApiError } from "@/lib/x-api";
 
 const PAGE_SIZE = 50;
 
@@ -32,7 +32,8 @@ async function fetchAndCacheXPage(paginationToken: string | null, offset: number
     items,
     nextToken: nextTokenAfterCache(offset, items.length),
     source: "x",
-    estimatedMonthlyCostUsd: getMonthlyEstimatedApiCost()
+    apiChargeUsd: getApiChargeUsd(),
+    estimatedApiUsageUsd: getEstimatedApiUsageUsd()
   };
 }
 
@@ -65,7 +66,8 @@ export async function GET(request: NextRequest) {
       ...page,
       nextToken: page.nextToken ?? encodeXToken(getSetting("bookmarks_next_x_token")),
       source: "cache",
-      estimatedMonthlyCostUsd: getMonthlyEstimatedApiCost()
+      apiChargeUsd: getApiChargeUsd(),
+      estimatedApiUsageUsd: getEstimatedApiUsageUsd()
     });
   } catch (error) {
     if (error instanceof AuthRequiredError) {

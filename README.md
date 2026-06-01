@@ -15,7 +15,7 @@ X/Twitterのブックマークだけを表示する、個人用ローカルWeb�
 - 画像をアプリ内モーダルで表示
 - ブックマーク解除
 - 解除直後のUndo
-- X APIの月次概算利用額を表示
+- X APIのチャージ総額と累積概算利用額を表示
 
 ## ローカル保存するデータ
 
@@ -62,11 +62,13 @@ X_CALLBACK_URL=http://localhost:8080/api/auth/callback/x
 APP_BASE_URL=http://localhost:8080
 TOKEN_ENCRYPTION_KEY=replace-with-a-long-random-secret
 DATA_DIR=/app/data
-MONTHLY_X_API_BUDGET_USD=3
+X_API_CHARGE_USD=5
+X_API_USAGE_OFFSET_USD=1.039
 ```
 
 `TOKEN_ENCRYPTION_KEY` は十分に長いランダム文字列、または32バイトのbase64文字列を指定してください。変更すると保存済みトークンを復号できなくなるため、通常は初回設定後に変えないでください。変更が必要な場合は、先に `docs/運用手順.md` の注意点を確認してください。
-`MONTHLY_X_API_BUDGET_USD` はX APIの月次概算予算です。未設定の場合は `3` として扱います。
+`X_API_CHARGE_USD` はX APIのチャージ総額です。未設定の場合は `5` として扱います。
+`X_API_USAGE_OFFSET_USD` は、アプリで記録する前に発生した利用額を累積概算に足す補正値です。現在の利用額に合わせて変更してください。新規利用時は `0` にできます。
 
 `.env` を作成・変更した後は、コンテナを再作成してください。
 
