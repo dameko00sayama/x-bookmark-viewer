@@ -53,6 +53,31 @@ export default function BookmarkViewer() {
   const [undoTweet, setUndoTweet] = useState<BookmarkTweet | null>(null);
   const nextTokenRef = useRef<string | null>(null);
   const refreshDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const undoDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearUndoTimer = useCallback(() => {
+    if (undoDoneTimerRef.current) {
+      clearTimeout(undoDoneTimerRef.current);
+      undoDoneTimerRef.current = null;
+    }
+  }, []);
+
+  const dismissUndoNotification = useCallback(() => {
+    clearUndoTimer();
+    setUndoTweet(null);
+  }, [clearUndoTimer]);
+
+  const showUndoNotification = useCallback(
+    (tweet: BookmarkTweet) => {
+      clearUndoTimer();
+      setUndoTweet(tweet);
+      undoDoneTimerRef.current = setTimeout(() => {
+        setUndoTweet(null);
+        undoDoneTimerRef.current = null;
+      }, 5000);
+    },
+    [clearUndoTimer]
+  );
 
   const loginError = useMemo(() => {
     if (typeof window === "undefined") {
@@ -103,7 +128,7 @@ export default function BookmarkViewer() {
         setLastSource(payload.source ?? null);
         setApiChargeUsd(payload.apiChargeUsd ?? null);
         setEstimatedApiUsageUsd(payload.estimatedApiUsageUsd ?? null);
-        setUndoTweet(null);
+        dismissUndoNotification();
         if (mode === "refresh") {
           setRefreshSucceeded(true);
           refreshDoneTimerRef.current = setTimeout(() => {
@@ -121,7 +146,7 @@ export default function BookmarkViewer() {
         setLoadingMode(null);
       }
     },
-    []
+    [dismissUndoNotification]
   );
 
   async function syncBookmarks() {
@@ -156,7 +181,7 @@ export default function BookmarkViewer() {
       setLastSource(payload.source ?? null);
       setApiChargeUsd(payload.apiChargeUsd ?? null);
       setEstimatedApiUsageUsd(payload.estimatedApiUsageUsd ?? null);
-      setUndoTweet(null);
+      dismissUndoNotification();
       setSyncSummary(
         `取得済み${payload.syncTargetCount ?? 0}件中${payload.syncedCount ?? 0}件をX側で確認、${
           payload.unbookmarkedCount ?? 0
@@ -213,8 +238,9 @@ export default function BookmarkViewer() {
       if (refreshDoneTimerRef.current) {
         clearTimeout(refreshDoneTimerRef.current);
       }
+      clearUndoTimer();
     };
-  }, []);
+  }, [clearUndoTimer]);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -222,7 +248,7 @@ export default function BookmarkViewer() {
     setItems([]);
     nextTokenRef.current = null;
     setNextToken(null);
-    setUndoTweet(null);
+    dismissUndoNotification();
   }
 
   async function removeBookmark(tweet: BookmarkTweet) {
@@ -241,7 +267,7 @@ export default function BookmarkViewer() {
       if (!response.ok) {
         throw new Error(payload.error ?? "BOOKMARK_OPERATION_FAILED");
       }
-      setUndoTweet(tweet);
+      showUndoNotification(tweet);
     } catch (caught) {
       setItems(previousItems);
       const code = caught instanceof Error ? caught.message : "BOOKMARK_OPERATION_FAILED";
@@ -264,7 +290,7 @@ export default function BookmarkViewer() {
         throw new Error(payload.error ?? "BOOKMARK_OPERATION_FAILED");
       }
       setItems((current) => [tweet, ...current]);
-      setUndoTweet(null);
+      dismissUndoNotification();
     } catch (caught) {
       const code = caught instanceof Error ? caught.message : "BOOKMARK_OPERATION_FAILED";
       setError(ERROR_MESSAGES[code] ?? ERROR_MESSAGES.BOOKMARK_OPERATION_FAILED);

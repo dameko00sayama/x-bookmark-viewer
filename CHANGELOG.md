@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.4.3 - 2026-06-07
+
+- Fix: Automatically dismiss the bookmark removal undo notice after a short delay.
+- Chore: Bump app version to v1.4.3.
+
 ## v1.4.2 - 2026-06-01
 
 - Fix: Keep the bookmark removal undo notice visible outside the scrolling bookmark list.
