@@ -916,28 +916,28 @@ export default function BookmarkViewer() {
           type="button"
           aria-label="一番上まで飛ぶ"
           title="一番上まで飛ぶ"
-          className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-panel/95 text-lg font-semibold text-slate-100 shadow-lg backdrop-blur transition hover:bg-ink"
+          className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-panel/95 shadow-lg backdrop-blur transition hover:bg-ink"
           onClick={scrollToTop}
         >
-          △
+          <img src="/icons/nav-top.svg" alt="" className="h-6 w-6" aria-hidden="true" />
         </button>
         <button
           type="button"
           aria-label="ひとつ上のブロックへ"
           title="ひとつ上のブロックへ"
-          className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-panel/95 text-lg font-semibold text-slate-100 shadow-lg backdrop-blur transition hover:bg-ink"
+          className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-panel/95 shadow-lg backdrop-blur transition hover:bg-ink"
           onClick={() => scrollToAdjacentBlock("previous")}
         >
-          ⏫
+          <img src="/icons/nav-previous.svg" alt="" className="h-6 w-6" aria-hidden="true" />
         </button>
         <button
           type="button"
           aria-label="ひとつ下のブロックへ"
           title="ひとつ下のブロックへ"
-          className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-panel/95 text-lg font-semibold text-slate-100 shadow-lg backdrop-blur transition hover:bg-ink"
+          className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-panel/95 shadow-lg backdrop-blur transition hover:bg-ink"
           onClick={() => scrollToAdjacentBlock("next")}
         >
-          ⏬
+          <img src="/icons/nav-next.svg" alt="" className="h-6 w-6" aria-hidden="true" />
         </button>
       </div>
 
