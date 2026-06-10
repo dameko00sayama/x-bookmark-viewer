@@ -810,6 +810,15 @@ export default function BookmarkViewer() {
                         onClick={() => setDraftTagColor(color)}
                       />
                     ))}
+                    <label className="ml-1 flex h-7 items-center gap-2 rounded-md border border-line bg-panel px-2 text-xs text-slate-300">
+                      <span>任意</span>
+                      <input
+                        type="color"
+                        value={draftTagColor}
+                        onChange={(event) => setDraftTagColor(event.target.value)}
+                        className="h-5 w-8 cursor-pointer border-0 bg-transparent p-0"
+                      />
+                    </label>
                   </div>
                   <button
                     type="button"
@@ -847,6 +856,15 @@ export default function BookmarkViewer() {
                             onClick={() => updateExistingTag(tag, { color })}
                           />
                         ))}
+                        <label className="flex h-6 items-center gap-1 rounded border border-line bg-ink px-1.5 text-xs text-slate-300">
+                          <span>任意</span>
+                          <input
+                            type="color"
+                            value={tag.color}
+                            onChange={(event) => updateExistingTag(tag, { color: event.target.value })}
+                            className="h-4 w-7 cursor-pointer border-0 bg-transparent p-0"
+                          />
+                        </label>
                         <button
                           type="button"
                           className="ml-auto rounded border border-line px-2 py-1 text-xs disabled:opacity-40"
