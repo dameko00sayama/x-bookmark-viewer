@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.1.0 - 2026-06-10
+
+- Feature: Add fixed bookmark block navigation controls for top, previous block, and next block movement.
+- Style: Replace block navigation text and emoji controls with consistent SVG icon assets.
+- Feature: Add color pickers to tag creation and tag editing while keeping the preset color swatches.
+- Chore: Bump app version to v2.1.0.
+
 ## v2.0.0 - 2026-06-10
 
 - Feature: Add local SQLite-backed tags for bookmarks.
