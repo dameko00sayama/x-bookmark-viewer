@@ -72,6 +72,7 @@ export default function BookmarkViewer() {
   const refreshDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLElement>(null);
 
   const clearUndoTimer = useCallback(() => {
     if (undoDoneTimerRef.current) {
@@ -338,6 +339,32 @@ export default function BookmarkViewer() {
     } catch (caught) {
       const code = caught instanceof Error ? caught.message : "BOOKMARK_OPERATION_FAILED";
       setError(ERROR_MESSAGES[code] ?? ERROR_MESSAGES.BOOKMARK_OPERATION_FAILED);
+    }
+  }
+
+  function getBookmarkBlockTops() {
+    const articles = Array.from(listRef.current?.querySelectorAll("article") ?? []);
+    return articles.map((article) => article.getBoundingClientRect().top + window.scrollY);
+  }
+
+  function scrollToTop() {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function scrollToAdjacentBlock(direction: "previous" | "next") {
+    const tops = getBookmarkBlockTops();
+    if (tops.length === 0) {
+      return;
+    }
+
+    const currentTop = window.scrollY;
+    const targetTop =
+      direction === "previous"
+        ? [...tops].reverse().find((top) => top < currentTop - 16)
+        : tops.find((top) => top > currentTop + 16);
+
+    if (targetTop !== undefined) {
+      window.scrollTo({ top: targetTop, behavior: "smooth" });
     }
   }
 
@@ -621,7 +648,7 @@ export default function BookmarkViewer() {
         </div>
       ) : null}
 
-      <section className="space-y-4">
+      <section ref={listRef} className="space-y-4">
         {filteredItems.map((tweet) => (
           <BookmarkCard
             key={tweet.id}
@@ -882,6 +909,36 @@ export default function BookmarkViewer() {
             </div>
           ) : null}
         </div>
+      </div>
+
+      <div className="fixed bottom-6 left-6 z-40 flex flex-col gap-2">
+        <button
+          type="button"
+          aria-label="一番上まで飛ぶ"
+          title="一番上まで飛ぶ"
+          className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-panel/95 text-lg font-semibold text-slate-100 shadow-lg backdrop-blur transition hover:bg-ink"
+          onClick={scrollToTop}
+        >
+          △
+        </button>
+        <button
+          type="button"
+          aria-label="ひとつ上のブロックへ"
+          title="ひとつ上のブロックへ"
+          className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-panel/95 text-lg font-semibold text-slate-100 shadow-lg backdrop-blur transition hover:bg-ink"
+          onClick={() => scrollToAdjacentBlock("previous")}
+        >
+          ⏫
+        </button>
+        <button
+          type="button"
+          aria-label="ひとつ下のブロックへ"
+          title="ひとつ下のブロックへ"
+          className="flex h-10 w-10 items-center justify-center rounded-md border border-line bg-panel/95 text-lg font-semibold text-slate-100 shadow-lg backdrop-blur transition hover:bg-ink"
+          onClick={() => scrollToAdjacentBlock("next")}
+        >
+          ⏬
+        </button>
       </div>
 
       <ImageModal image={modalImage} onClose={() => setModalImage(null)} />
