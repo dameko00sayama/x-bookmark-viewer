@@ -1,13 +1,17 @@
 "use client";
 
-import type { BookmarkTweet } from "@/lib/x-api";
-import { useRef, useState } from "react";
+import type { BookmarkTag, BookmarkTweet } from "@/lib/x-api";
+import { useEffect, useRef, useState } from "react";
 
 type BookmarkCardProps = {
   tweet: BookmarkTweet;
+  tags: BookmarkTag[];
   onRemove: (tweet: BookmarkTweet) => void;
   onImageClick: (image: { url: string; altText: string | null }) => void;
+  onTagsChange: (tweetId: string, tags: BookmarkTag[]) => void;
 };
+
+const MULTI_TAG_MARK = "+";
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -83,6 +87,67 @@ function firstLine(text: string) {
   return text.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "";
 }
 
+function getPrimaryTag(tags: BookmarkTag[]) {
+  return [...tags].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id)[0] ?? null;
+}
+
+type TagRibbonProps = {
+  selectedTags: BookmarkTag[];
+  allTags: BookmarkTag[];
+  open: boolean;
+  saving: boolean;
+  onToggleOpen: () => void;
+  onSelect: (tagId: number, checked: boolean) => void;
+};
+
+function TagRibbon({ selectedTags, allTags, open, saving, onToggleOpen, onSelect }: TagRibbonProps) {
+  const primaryTag = getPrimaryTag(selectedTags);
+  const hasMultipleTags = selectedTags.length > 1;
+
+  return (
+    <div className="relative shrink-0" onClick={(event) => event.stopPropagation()}>
+      {hasMultipleTags ? (
+        <span className="absolute -right-1 -top-2 z-10 flex h-4 w-4 items-center justify-center rounded-full bg-white text-[10px] font-bold text-ink">
+          {MULTI_TAG_MARK}
+        </span>
+      ) : null}
+      <button
+        type="button"
+        className={`relative min-h-8 min-w-16 max-w-28 rounded-r-md border px-2 py-1 text-left text-xs font-semibold transition ${
+          primaryTag
+            ? "border-transparent text-white shadow-sm"
+            : "border-dashed border-slate-500 bg-transparent text-slate-400 hover:border-slate-300 hover:text-slate-200"
+        }`}
+        style={primaryTag ? { backgroundColor: primaryTag.color } : undefined}
+        onClick={onToggleOpen}
+      >
+        <span className="block truncate">{primaryTag?.name ?? "タグなし"}</span>
+      </button>
+
+      {open ? (
+        <div className="absolute left-0 top-10 z-30 w-64 rounded-md border border-line bg-ink p-3 text-sm text-slate-100 shadow-2xl">
+          <div className="max-h-64 space-y-2 overflow-auto pr-1">
+            {allTags.map((tag) => (
+              <label key={tag.id} className="flex items-center gap-2 rounded-md border border-line px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={selectedTags.some((selected) => selected.id === tag.id)}
+                  onChange={(event) => onSelect(tag.id, event.target.checked)}
+                  disabled={saving}
+                />
+                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: tag.color }} />
+                <span className="min-w-0 flex-1 truncate">{tag.name}</span>
+              </label>
+            ))}
+            {allTags.length === 0 ? <p className="text-quiet">タグ設定からタグを追加してください。</p> : null}
+          </div>
+          {saving ? <p className="mt-2 text-xs text-slate-400">保存中...</p> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 type VideoMediaProps = {
   media: BookmarkTweet["media"][number];
 };
@@ -149,7 +214,7 @@ function VideoMedia({ media }: VideoMediaProps) {
   );
 }
 
-export default function BookmarkCard({ tweet, onRemove, onImageClick }: BookmarkCardProps) {
+export default function BookmarkCard({ tweet, tags, onRemove, onImageClick, onTagsChange }: BookmarkCardProps) {
   const [localTweet, setLocalTweet] = useState<BookmarkTweet>(tweet);
   const [trans, setTrans] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -159,6 +224,68 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
   const [savingNote, setSavingNote] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
   const [loadingFull, setLoadingFull] = useState(false);
+  const [tagPopoverOpen, setTagPopoverOpen] = useState(false);
+  const [savingTags, setSavingTags] = useState(false);
+  const tagRibbonRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setLocalTweet((current) => ({ ...current, tags: tweet.tags }));
+  }, [tweet.tags]);
+
+  useEffect(() => {
+    if (!tagPopoverOpen) {
+      return;
+    }
+
+    function closeTagPopoverOnOutsideClick(event: PointerEvent) {
+      if (tagRibbonRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setTagPopoverOpen(false);
+    }
+
+    document.addEventListener("pointerdown", closeTagPopoverOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeTagPopoverOnOutsideClick);
+  }, [tagPopoverOpen]);
+
+  async function saveTags(nextTags: BookmarkTag[]) {
+    const previousTags = localTweet.tags;
+    setSavingTags(true);
+    setLocalTweet((current) => ({ ...current, tags: nextTags }));
+    onTagsChange(localTweet.id, nextTags);
+
+    try {
+      const response = await fetch(`/api/bookmarks/${localTweet.id}/tags`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tagIds: nextTags.map((tag) => tag.id) })
+      });
+      const payload = (await response.json()) as { tags?: BookmarkTag[] };
+      if (!response.ok || !payload.tags) {
+        throw new Error("TAG_SAVE_FAILED");
+      }
+      setLocalTweet((current) => ({ ...current, tags: payload.tags! }));
+      onTagsChange(localTweet.id, payload.tags);
+    } catch {
+      setLocalTweet((current) => ({ ...current, tags: previousTags }));
+      onTagsChange(localTweet.id, previousTags);
+    } finally {
+      setSavingTags(false);
+    }
+  }
+
+  function toggleTag(tagId: number, checked: boolean) {
+    const tag = tags.find((item) => item.id === tagId);
+    if (!tag) {
+      return;
+    }
+
+    const nextTags = checked
+      ? [...localTweet.tags, tag].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id)
+      : localTweet.tags.filter((item) => item.id !== tagId);
+    setTagPopoverOpen(false);
+    void saveTags(nextTags);
+  }
   function isProbablyTruncated(text: string) {
     const t = (text ?? "").trim();
     if (t.length > 140) return true;
@@ -255,6 +382,16 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
     return (
       <article className="rounded-lg border border-slate-800/70 bg-slate-900/45 px-5 py-4 opacity-85 transition hover:border-slate-600 hover:opacity-100">
         <div className="flex items-start gap-4">
+          <div ref={tagRibbonRef}>
+            <TagRibbon
+              selectedTags={localTweet.tags}
+              allTags={tags}
+              open={tagPopoverOpen}
+              saving={savingTags}
+              onToggleOpen={() => setTagPopoverOpen((current) => !current)}
+              onSelect={toggleTag}
+            />
+          </div>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold text-slate-300">
               {localTweet.author?.name ?? "Unknown"}{" "}
@@ -284,7 +421,18 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
       onClick={openTweet}
     >
       <div className="mb-3 flex items-start justify-between gap-4">
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-start gap-3">
+          <div ref={tagRibbonRef}>
+            <TagRibbon
+              selectedTags={localTweet.tags}
+              allTags={tags}
+              open={tagPopoverOpen}
+              saving={savingTags}
+              onToggleOpen={() => setTagPopoverOpen((current) => !current)}
+              onSelect={toggleTag}
+            />
+          </div>
+          <div className="min-w-0">
           <div className="text-sm font-semibold text-white">
             <span className="group cursor-pointer break-words transition hover:text-sky-300 hover:underline hover:decoration-sky-300/70 hover:underline-offset-2">
               {tweet.author?.name ?? "Unknown"}{" "}
@@ -292,6 +440,7 @@ export default function BookmarkCard({ tweet, onRemove, onImageClick }: Bookmark
                 (@{tweet.author?.username ?? tweet.author?.id ?? "unknown"})
               </span>
             </span>
+          </div>
           </div>
         </div>
         <time className="shrink-0 cursor-pointer text-sm text-quiet transition hover:text-sky-300 hover:underline hover:decoration-sky-300/70 hover:underline-offset-2">

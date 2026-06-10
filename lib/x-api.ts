@@ -21,6 +21,13 @@ export type BookmarkAuthor = {
   username: string;
 };
 
+export type BookmarkTag = {
+  id: number;
+  name: string;
+  color: string;
+  sortOrder: number;
+};
+
 export type QuotedBookmarkTweet = {
   id: string;
   text: string;
@@ -37,6 +44,7 @@ export type BookmarkTweet = {
   media: BookmarkMedia[];
   note: string | null;
   collapsed: boolean;
+  tags: BookmarkTag[];
   quotedTweet: QuotedBookmarkTweet | null;
 };
 
@@ -508,6 +516,7 @@ function normalizeBookmarks(payload: any): BookmarkPage {
       media: mediaKeys.map((key: string) => media.get(key)).filter(Boolean),
       note: null,
       collapsed: false,
+      tags: [],
       quotedTweet: quoted
         ? {
             id: quoted.id,

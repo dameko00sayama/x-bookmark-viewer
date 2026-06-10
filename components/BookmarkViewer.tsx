@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BookmarkTweet } from "@/lib/x-api";
+import type { BookmarkTag, BookmarkTweet } from "@/lib/x-api";
 import packageJson from "@/package.json";
 import BookmarkCard from "./BookmarkCard";
 import ImageModal from "./ImageModal";
@@ -21,6 +21,15 @@ type BookmarkResponse = {
 
 type AuthState = "checking" | "anonymous" | "authenticated";
 type LoadingMode = "cache" | "refresh" | "sync" | "more";
+type MenuPanel = "search" | "tag-filter" | "tag-settings";
+
+const TAG_COLORS = ["#38bdf8", "#34d399", "#f59e0b", "#f472b6", "#a78bfa", "#f87171", "#94a3b8"];
+
+const menuItems: { id: MenuPanel; label: string }[] = [
+  { id: "search", label: "検索" },
+  { id: "tag-filter", label: "タグフィルター" },
+  { id: "tag-settings", label: "タグ設定" }
+];
 
 const ERROR_MESSAGES: Record<string, string> = {
   AUTH_REQUIRED: "認証が切れています。再ログインしてください。",
@@ -51,9 +60,18 @@ export default function BookmarkViewer() {
   const [estimatedApiUsageUsd, setEstimatedApiUsageUsd] = useState<number | null>(null);
   const [modalImage, setModalImage] = useState<{ url: string; altText: string | null } | null>(null);
   const [undoTweet, setUndoTweet] = useState<BookmarkTweet | null>(null);
+  const [tags, setTags] = useState<BookmarkTag[]>([]);
+  const [activeMenu, setActiveMenu] = useState<MenuPanel | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeTagIds, setActiveTagIds] = useState<number[]>([]);
+  const [showUntaggedOnly, setShowUntaggedOnly] = useState(false);
+  const [draftTagName, setDraftTagName] = useState("");
+  const [draftTagColor, setDraftTagColor] = useState(TAG_COLORS[0]);
+  const [tagError, setTagError] = useState<string | null>(null);
   const nextTokenRef = useRef<string | null>(null);
   const refreshDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const clearUndoTimer = useCallback(() => {
     if (undoDoneTimerRef.current) {
@@ -91,6 +109,15 @@ export default function BookmarkViewer() {
     }
     const message = ERROR_MESSAGES[raw] ?? raw;
     return reason ? `${message} (${reason})` : message;
+  }, []);
+
+  const loadTags = useCallback(async () => {
+    const response = await fetch("/api/tags");
+    const payload = (await response.json()) as { tags?: BookmarkTag[]; error?: string };
+    if (!response.ok) {
+      throw new Error(payload.error ?? "TAG_FETCH_FAILED");
+    }
+    setTags(payload.tags ?? []);
   }, []);
 
   const loadBookmarks = useCallback(
@@ -216,6 +243,7 @@ export default function BookmarkViewer() {
 
       if (payload.authenticated) {
         setAuth("authenticated");
+        await loadTags().catch(() => undefined);
         await loadBookmarks("cache");
       } else {
         setAuth("anonymous");
@@ -231,7 +259,7 @@ export default function BookmarkViewer() {
     return () => {
       cancelled = true;
     };
-  }, [loadBookmarks]);
+  }, [loadBookmarks, loadTags]);
 
   useEffect(() => {
     return () => {
@@ -241,6 +269,22 @@ export default function BookmarkViewer() {
       clearUndoTimer();
     };
   }, [clearUndoTimer]);
+
+  useEffect(() => {
+    if (!activeMenu) {
+      return;
+    }
+
+    function closeMenuOnOutsideClick(event: PointerEvent) {
+      if (menuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setActiveMenu(null);
+    }
+
+    document.addEventListener("pointerdown", closeMenuOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeMenuOnOutsideClick);
+  }, [activeMenu]);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -296,6 +340,136 @@ export default function BookmarkViewer() {
       setError(ERROR_MESSAGES[code] ?? ERROR_MESSAGES.BOOKMARK_OPERATION_FAILED);
     }
   }
+
+  function applyTweetTags(tweetId: string, nextTags: BookmarkTag[]) {
+    setItems((current) =>
+      current.map((item) => (item.id === tweetId ? { ...item, tags: nextTags } : item))
+    );
+  }
+
+  async function createNewTag() {
+    const name = draftTagName.trim();
+    if (!name) {
+      return;
+    }
+
+    setTagError(null);
+    try {
+      const response = await fetch("/api/tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, color: draftTagColor })
+      });
+      const payload = (await response.json()) as { tag?: BookmarkTag; error?: string };
+      if (!response.ok || !payload.tag) {
+        throw new Error(payload.error ?? "TAG_CREATE_FAILED");
+      }
+      setTags((current) => [...current, payload.tag!].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id));
+      setDraftTagName("");
+    } catch (caught) {
+      setTagError(caught instanceof Error ? caught.message : "TAG_CREATE_FAILED");
+    }
+  }
+
+  async function updateExistingTag(tag: BookmarkTag, updates: Partial<BookmarkTag>) {
+    setTagError(null);
+    const nextTag = { ...tag, ...updates };
+    setTags((current) =>
+      current.map((item) => (item.id === tag.id ? nextTag : item)).sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id)
+    );
+    setItems((current) =>
+      current.map((item) => ({
+        ...item,
+        tags: item.tags.map((itemTag) => (itemTag.id === tag.id ? nextTag : itemTag))
+      }))
+    );
+
+    try {
+      const response = await fetch(`/api/tags/${tag.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates)
+      });
+      const payload = (await response.json()) as { tag?: BookmarkTag; error?: string };
+      if (!response.ok || !payload.tag) {
+        throw new Error(payload.error ?? "TAG_UPDATE_FAILED");
+      }
+      setTags((current) =>
+        current.map((item) => (item.id === tag.id ? payload.tag! : item)).sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id)
+      );
+    } catch (caught) {
+      await Promise.all([loadTags().catch(() => undefined), loadBookmarks("cache").catch(() => undefined)]);
+      setTagError(caught instanceof Error ? caught.message : "TAG_UPDATE_FAILED");
+    }
+  }
+
+  async function deleteExistingTag(tag: BookmarkTag) {
+    const ok = window.confirm(`タグ「${tag.name}」を削除しますか？このタグはすべてのポストから外れます。`);
+    if (!ok) {
+      return;
+    }
+
+    setTagError(null);
+    setTags((current) => current.filter((item) => item.id !== tag.id));
+    setItems((current) =>
+      current.map((item) => ({ ...item, tags: item.tags.filter((itemTag) => itemTag.id !== tag.id) }))
+    );
+    setActiveTagIds((current) => current.filter((tagId) => tagId !== tag.id));
+
+    try {
+      const response = await fetch(`/api/tags/${tag.id}`, { method: "DELETE" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error ?? "TAG_DELETE_FAILED");
+      }
+    } catch (caught) {
+      await Promise.all([loadTags().catch(() => undefined), loadBookmarks("cache").catch(() => undefined)]);
+      setTagError(caught instanceof Error ? caught.message : "TAG_DELETE_FAILED");
+    }
+  }
+
+  async function moveTag(tag: BookmarkTag, direction: -1 | 1) {
+    const ordered = [...tags].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
+    const index = ordered.findIndex((item) => item.id === tag.id);
+    const swapIndex = index + direction;
+    if (index < 0 || swapIndex < 0 || swapIndex >= ordered.length) {
+      return;
+    }
+
+    const other = ordered[swapIndex];
+    await updateExistingTag(tag, { sortOrder: other.sortOrder });
+    await updateExistingTag(other, { sortOrder: tag.sortOrder });
+  }
+
+  const filteredItems = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return items.filter((item) => {
+      if (query) {
+        const haystack = [
+          item.text,
+          item.author?.name ?? "",
+          item.author?.username ?? "",
+          item.note ?? "",
+          ...item.tags.map((tag) => tag.name)
+        ]
+          .join("\n")
+          .toLowerCase();
+        if (!haystack.includes(query)) {
+          return false;
+        }
+      }
+
+      if (showUntaggedOnly && item.tags.length > 0) {
+        return false;
+      }
+
+      if (activeTagIds.length > 0 && !item.tags.some((tag) => activeTagIds.includes(tag.id))) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [activeTagIds, items, searchQuery, showUntaggedOnly]);
 
   if (auth === "checking") {
     return (
@@ -448,15 +622,23 @@ export default function BookmarkViewer() {
       ) : null}
 
       <section className="space-y-4">
-        {items.map((tweet) => (
+        {filteredItems.map((tweet) => (
           <BookmarkCard
             key={tweet.id}
             tweet={tweet}
+            tags={tags}
             onRemove={removeBookmark}
             onImageClick={setModalImage}
+            onTagsChange={applyTweetTags}
           />
         ))}
       </section>
+
+      {items.length > 0 && filteredItems.length === 0 && !loading ? (
+        <div className="rounded-lg border border-line bg-panel p-8 text-center text-quiet">
+          条件に一致するポストがありません。
+        </div>
+      ) : null}
 
       {items.length === 0 && !loading ? (
         <div className="rounded-lg border border-line bg-panel p-8 text-center text-quiet">
@@ -477,6 +659,229 @@ export default function BookmarkViewer() {
         ) : (
           <span className="text-sm text-quiet">{loading ? "読み込み中" : "ここまでです"}</span>
         )}
+      </div>
+
+      <div ref={menuRef} className="fixed left-4 top-3 z-40 flex flex-col items-start">
+        {activeMenu ? (
+          <div className="order-2 mt-3 w-[min(calc(100vw-2rem),380px)] rounded-lg border border-line bg-panel/98 p-4 text-sm text-slate-100 shadow-2xl backdrop-blur">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="font-semibold">{menuItems.find((item) => item.id === activeMenu)?.label}</p>
+              <button
+                type="button"
+                className="rounded-md border border-line px-2 py-1 text-xs text-slate-200 hover:bg-ink"
+                onClick={() => setActiveMenu(null)}
+              >
+                閉じる
+              </button>
+            </div>
+
+            {activeMenu === "search" ? (
+              <div className="space-y-3">
+                <input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  className="w-full rounded-md border border-line bg-ink px-3 py-2 text-sm text-slate-100 outline-none focus:border-slate-500"
+                  placeholder="本文、投稿者、メモ、タグを検索"
+                />
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    className="text-xs font-semibold text-sky-200 underline"
+                    onClick={() => setSearchQuery("")}
+                  >
+                    検索をクリア
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+            {activeMenu === "tag-filter" ? (
+              <div className="space-y-3">
+                <label
+                  className={`flex items-center gap-2 rounded-md border border-dashed px-3 py-2 transition ${
+                    activeTagIds.length > 0
+                      ? "cursor-not-allowed border-slate-700 bg-slate-800/35 text-slate-500 opacity-60"
+                      : "border-slate-600"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={showUntaggedOnly}
+                    disabled={activeTagIds.length > 0}
+                    className="disabled:cursor-not-allowed disabled:opacity-40"
+                    onChange={(event) => {
+                      setShowUntaggedOnly(event.target.checked);
+                      if (event.target.checked) {
+                        setActiveTagIds([]);
+                      }
+                    }}
+                  />
+                  <span>タグなし</span>
+                </label>
+                <div className="max-h-64 space-y-2 overflow-auto pr-1">
+                  {tags.map((tag) => (
+                    <label
+                      key={tag.id}
+                      className={`flex items-center gap-2 rounded-md border px-3 py-2 transition ${
+                        showUntaggedOnly
+                          ? "cursor-not-allowed border-slate-800 bg-slate-800/35 text-slate-500 opacity-60"
+                          : "border-line"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={activeTagIds.includes(tag.id)}
+                        disabled={showUntaggedOnly}
+                        className="disabled:cursor-not-allowed disabled:opacity-40"
+                        onChange={(event) => {
+                          if (event.target.checked) {
+                            setShowUntaggedOnly(false);
+                          }
+                          setActiveTagIds((current) =>
+                            event.target.checked ? [...current, tag.id] : current.filter((tagId) => tagId !== tag.id)
+                          );
+                        }}
+                      />
+                      <span className="h-3 w-3 rounded-full" style={{ backgroundColor: tag.color }} />
+                      <span className="min-w-0 flex-1 truncate">{tag.name}</span>
+                    </label>
+                  ))}
+                  {tags.length === 0 ? <p className="text-quiet">タグがまだありません。</p> : null}
+                </div>
+                {activeTagIds.length > 0 || showUntaggedOnly ? (
+                  <button
+                    type="button"
+                    className="text-xs font-semibold text-sky-200 underline"
+                    onClick={() => {
+                      setActiveTagIds([]);
+                      setShowUntaggedOnly(false);
+                    }}
+                  >
+                    フィルターをクリア
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+            {activeMenu === "tag-settings" ? (
+              <div className="space-y-4">
+                <div className="space-y-3 rounded-md border border-line bg-ink/60 p-3">
+                  <input
+                    value={draftTagName}
+                    onChange={(event) => setDraftTagName(event.target.value)}
+                    className="w-full rounded-md border border-line bg-panel px-3 py-2 text-sm text-slate-100 outline-none focus:border-slate-500"
+                    placeholder="新しいタグ名"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    {TAG_COLORS.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        aria-label={`色 ${color}`}
+                        className={`h-7 w-7 rounded-full border ${draftTagColor === color ? "border-white" : "border-transparent"}`}
+                        style={{ backgroundColor: color }}
+                        onClick={() => setDraftTagColor(color)}
+                      />
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-md bg-white px-3 py-2 text-sm font-semibold text-ink hover:bg-slate-200 disabled:opacity-50"
+                    onClick={createNewTag}
+                    disabled={!draftTagName.trim()}
+                  >
+                    追加
+                  </button>
+                </div>
+
+                <div className="max-h-72 space-y-2 overflow-auto pr-1">
+                  {tags.map((tag, index) => (
+                    <div key={tag.id} className="rounded-md border border-line p-3">
+                      <div className="flex items-center gap-2">
+                        <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: tag.color }} />
+                        <input
+                          defaultValue={tag.name}
+                          onBlur={(event) => {
+                            if (event.target.value !== tag.name) {
+                              void updateExistingTag(tag, { name: event.target.value });
+                            }
+                          }}
+                          className="min-w-0 flex-1 rounded-md border border-line bg-ink px-2 py-1 text-sm text-slate-100 outline-none focus:border-slate-500"
+                        />
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {TAG_COLORS.map((color) => (
+                          <button
+                            key={color}
+                            type="button"
+                            aria-label={`色 ${color}`}
+                            className={`h-5 w-5 rounded-full border ${tag.color === color ? "border-white" : "border-transparent"}`}
+                            style={{ backgroundColor: color }}
+                            onClick={() => updateExistingTag(tag, { color })}
+                          />
+                        ))}
+                        <button
+                          type="button"
+                          className="ml-auto rounded border border-line px-2 py-1 text-xs disabled:opacity-40"
+                          onClick={() => moveTag(tag, -1)}
+                          disabled={index === 0}
+                        >
+                          上へ
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-line px-2 py-1 text-xs disabled:opacity-40"
+                          onClick={() => moveTag(tag, 1)}
+                          disabled={index === tags.length - 1}
+                        >
+                          下へ
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-red-400/50 px-2 py-1 text-xs text-red-100"
+                          onClick={() => deleteExistingTag(tag)}
+                        >
+                          削除
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {tags.length === 0 ? <p className="text-quiet">タグがまだありません。</p> : null}
+                </div>
+                {tagError ? <p className="text-xs text-red-200">{tagError}</p> : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="order-1 flex items-start gap-2">
+          <button
+            type="button"
+            aria-label="メニュー"
+            className="flex h-12 w-12 items-center justify-center rounded-full border border-line bg-white text-2xl font-semibold leading-none text-ink shadow-lg transition hover:bg-slate-200"
+            onClick={() => setActiveMenu((current) => (current ? null : "search"))}
+          >
+            ≡
+          </button>
+          {activeMenu ? (
+            <div className="flex flex-row flex-wrap gap-2">
+              {menuItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`rounded-md border px-3 py-2 text-left text-sm font-semibold shadow-lg ${
+                    activeMenu === item.id
+                      ? "border-white bg-white text-ink"
+                      : "border-line bg-panel text-slate-100 hover:bg-ink"
+                  }`}
+                  onClick={() => setActiveMenu(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <ImageModal image={modalImage} onClose={() => setModalImage(null)} />

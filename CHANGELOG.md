@@ -1,5 +1,15 @@
 # Changelog
 
+## v2.0.0 - 2026-06-10
+
+- Feature: Add local SQLite-backed tags for bookmarks.
+- Feature: Add tag management with create, rename, color, ordering, and delete controls.
+- Feature: Add bookmark tag ribbons with multi-tag indicators and per-card tag assignment.
+- Feature: Add a floating browse menu with search, tag filtering, and tag settings.
+- Feature: Add tag and untagged filters for the loaded bookmark list.
+- Chore: Isolate optional Next.js dist directories through `NEXT_DIST_DIR`.
+- Chore: Bump app version to v2.0.0.
+
 ## v1.4.3 - 2026-06-07
 
 - Fix: Automatically dismiss the bookmark removal undo notice after a short delay.

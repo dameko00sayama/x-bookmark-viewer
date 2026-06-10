@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
 import { decryptText, encryptText } from "./crypto";
-import type { BookmarkTweet } from "./x-api";
+import type { BookmarkTag, BookmarkTweet } from "./x-api";
 
 export type StoredAuth = {
   userId: string;
@@ -91,6 +91,23 @@ function getDb() {
         tweet_id TEXT PRIMARY KEY,
         collapsed INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS tags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        color TEXT NOT NULL,
+        sort_order INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS bookmark_tags (
+        tweet_id TEXT NOT NULL,
+        tag_id INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (tweet_id, tag_id),
+        FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
       );
     `);
 
@@ -194,6 +211,64 @@ export type CachedBookmarkPage = {
   nextToken: string | null;
 };
 
+type StoredTagRow = {
+  id: number;
+  name: string;
+  color: string;
+  sort_order: number;
+};
+
+function toBookmarkTag(row: StoredTagRow): BookmarkTag {
+  return {
+    id: row.id,
+    name: row.name,
+    color: row.color,
+    sortOrder: row.sort_order
+  };
+}
+
+function getTagsForTweetIds(tweetIds: string[]) {
+  const uniqueIds = [...new Set(tweetIds)].filter(Boolean);
+  if (uniqueIds.length === 0) {
+    return new Map<string, BookmarkTag[]>();
+  }
+
+  const placeholders = uniqueIds.map(() => "?").join(", ");
+  const rows = getDb()
+    .prepare(
+      `
+      SELECT
+        bookmark_tags.tweet_id,
+        tags.id,
+        tags.name,
+        tags.color,
+        tags.sort_order
+      FROM bookmark_tags
+      INNER JOIN tags ON tags.id = bookmark_tags.tag_id
+      WHERE bookmark_tags.tweet_id IN (${placeholders})
+      ORDER BY tags.sort_order ASC, tags.id ASC
+    `
+    )
+    .all(...uniqueIds) as (StoredTagRow & { tweet_id: string })[];
+
+  const tagsByTweetId = new Map<string, BookmarkTag[]>();
+  for (const row of rows) {
+    const current = tagsByTweetId.get(row.tweet_id) ?? [];
+    current.push(toBookmarkTag(row));
+    tagsByTweetId.set(row.tweet_id, current);
+  }
+
+  return tagsByTweetId;
+}
+
+function attachTags(items: BookmarkTweet[]) {
+  const tagsByTweetId = getTagsForTweetIds(items.map((item) => item.id));
+  return items.map((item) => ({
+    ...item,
+    tags: tagsByTweetId.get(item.id) ?? item.tags ?? []
+  }));
+}
+
 export function getSetting(key: string): string | null {
   const row = getDb()
     .prepare("SELECT value FROM settings WHERE key = ?")
@@ -263,13 +338,15 @@ export function getCachedBookmarkPage(offset = 0, limit = 50): CachedBookmarkPag
 
   const total = getCachedBookmarkCount();
 
-  return {
-    items: rows.map((row) => ({
+  const items = rows.map((row) => ({
       ...(JSON.parse(row.payload) as BookmarkTweet),
       cachedAt: new Date(row.cached_at).toISOString(),
       note: row.note,
       collapsed: row.collapsed === 1
-    })),
+    }));
+
+  return {
+    items: attachTags(items),
     nextToken: offset + rows.length < total ? `cache:${offset + rows.length}` : null
   };
 }
@@ -294,14 +371,17 @@ export function applyLocalBookmarkState(items: BookmarkTweet[]) {
     .all(...ids) as { tweet_id: string; note: string | null; collapsed: number | null }[];
 
   const stateById = new Map(rows.map((row) => [row.tweet_id, row]));
-  return items.map((item) => {
+  const withLocalState = items.map((item) => {
     const state = stateById.get(item.id);
     return {
       ...item,
       note: state?.note ?? item.note,
-      collapsed: state?.collapsed === 1
+      collapsed: state?.collapsed === 1,
+      tags: item.tags ?? []
     };
   });
+
+  return attachTags(withLocalState);
 }
 
 export function saveCachedBookmarkPage(items: BookmarkTweet[], offset: number, nextXToken: string | null) {
@@ -522,6 +602,109 @@ export function saveBookmarkCollapsed(tweetId: string, collapsed: boolean) {
     `
     )
     .run(tweetId, collapsed ? 1 : 0, Date.now());
+}
+
+export function getTags() {
+  const rows = getDb()
+    .prepare(
+      `
+      SELECT id, name, color, sort_order
+      FROM tags
+      ORDER BY sort_order ASC, id ASC
+    `
+    )
+    .all() as StoredTagRow[];
+
+  return rows.map(toBookmarkTag);
+}
+
+export function createTag(name: string, color: string) {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error("TAG_NAME_REQUIRED");
+  }
+
+  const now = Date.now();
+  const row = getDb()
+    .prepare("SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM tags")
+    .get() as { next_order: number };
+
+  const result = getDb()
+    .prepare(
+      `
+      INSERT INTO tags (name, color, sort_order, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `
+    )
+    .run(trimmed, color, row.next_order, now, now);
+
+  return {
+    id: Number(result.lastInsertRowid),
+    name: trimmed,
+    color,
+    sortOrder: row.next_order
+  };
+}
+
+export function updateTag(tagId: number, updates: { name?: string; color?: string; sortOrder?: number }) {
+  const current = getDb()
+    .prepare("SELECT id, name, color, sort_order FROM tags WHERE id = ?")
+    .get(tagId) as StoredTagRow | undefined;
+
+  if (!current) {
+    throw new Error("TAG_NOT_FOUND");
+  }
+
+  const nextName = updates.name === undefined ? current.name : updates.name.trim();
+  if (!nextName) {
+    throw new Error("TAG_NAME_REQUIRED");
+  }
+
+  const nextColor = updates.color ?? current.color;
+  const nextSortOrder = Number.isFinite(updates.sortOrder) ? Number(updates.sortOrder) : current.sort_order;
+
+  getDb()
+    .prepare(
+      `
+      UPDATE tags
+      SET name = ?, color = ?, sort_order = ?, updated_at = ?
+      WHERE id = ?
+    `
+    )
+    .run(nextName, nextColor, nextSortOrder, Date.now(), tagId);
+
+  return {
+    id: tagId,
+    name: nextName,
+    color: nextColor,
+    sortOrder: nextSortOrder
+  };
+}
+
+export function deleteTag(tagId: number) {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare("DELETE FROM bookmark_tags WHERE tag_id = ?").run(tagId);
+    db.prepare("DELETE FROM tags WHERE id = ?").run(tagId);
+  })();
+}
+
+export function replaceBookmarkTags(tweetId: string, tagIds: number[]) {
+  const uniqueTagIds = [...new Set(tagIds)]
+    .map((tagId) => Number(tagId))
+    .filter((tagId) => Number.isInteger(tagId) && tagId > 0);
+  const now = Date.now();
+  const db = getDb();
+
+  db.transaction(() => {
+    db.prepare("DELETE FROM bookmark_tags WHERE tweet_id = ?").run(tweetId);
+    const insert = db.prepare("INSERT OR IGNORE INTO bookmark_tags (tweet_id, tag_id, created_at) VALUES (?, ?, ?)");
+    for (const tagId of uniqueTagIds) {
+      insert.run(tweetId, tagId, now);
+    }
+  })();
+
+  return getTagsForTweetIds([tweetId]).get(tweetId) ?? [];
 }
 
 export function recordApiUsage(operation: string, resources: number, estimatedCostUsd: number) {

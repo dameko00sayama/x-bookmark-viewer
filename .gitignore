@@ -294,6 +294,7 @@ node_modules/
 
 # Next.js
 .next/
+.next-*/
 data/
 tsconfig.tsbuildinfo
 
