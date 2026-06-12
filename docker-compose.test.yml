@@ -1,5 +1,7 @@
 services:
-  app:
+  app-test:
+    container_name: x-bookmark-viewer-test
+    image: x-bookmark-viewer:test
     build: .
     ports:
       - "8181:8181"
@@ -15,8 +17,8 @@ services:
       ENABLE_EXTERNAL_TRANSLATION: "${ENABLE_EXTERNAL_TRANSLATION:-0}"
       PORT: "8181"
     volumes:
-      - app-data:/app/data
+      - app-test-data:/app/data
     restart: unless-stopped
 
 volumes:
-  app-data:
+  app-test-data:

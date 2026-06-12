@@ -296,6 +296,7 @@ node_modules/
 .next/
 .next-*/
 data/
+tmp/
 tsconfig.tsbuildinfo
 
 # Visual Studio 6 build log

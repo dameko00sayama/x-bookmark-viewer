@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuth } from "@/lib/db";
+import { getAccounts, getAuth } from "@/lib/db";
 
 export async function GET() {
   const auth = getAuth();
@@ -10,6 +10,9 @@ export async function GET() {
 
   return NextResponse.json({
     authenticated: true,
-    userId: auth.userId
+    userId: auth.userId,
+    username: auth.username ?? null,
+    name: auth.name ?? null,
+    accounts: getAccounts()
   });
 }

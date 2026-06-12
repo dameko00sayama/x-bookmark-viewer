@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  getActiveCachedBookmarkCount,
+  getBookmarkNextXToken,
   getCachedBookmarkCount,
   getCachedBookmarkPage,
   getAuth,
   getEstimatedApiUsageUsd,
-  getSetting,
   saveCachedBookmarkPage
 } from "@/lib/db";
 import { AuthRequiredError, BudgetExceededError, fetchBookmarks, getApiChargeUsd, XApiError } from "@/lib/x-api";
@@ -21,7 +22,7 @@ function nextTokenAfterCache(offset: number, itemCount: number) {
     return `cache:${offset + itemCount}`;
   }
 
-  return encodeXToken(getSetting("bookmarks_next_x_token"));
+  return encodeXToken(getBookmarkNextXToken());
 }
 
 async function fetchAndCacheXPage(paginationToken: string | null, offset: number) {
@@ -54,7 +55,7 @@ export async function GET(request: NextRequest) {
 
     if (token?.startsWith("x:")) {
       const xToken = decodeURIComponent(token.slice(2));
-      const response = await fetchAndCacheXPage(xToken, getCachedBookmarkCount());
+      const response = await fetchAndCacheXPage(xToken, getActiveCachedBookmarkCount());
       return NextResponse.json(response);
     }
 
@@ -64,7 +65,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       ...page,
-      nextToken: page.nextToken ?? encodeXToken(getSetting("bookmarks_next_x_token")),
+      nextToken: page.nextToken ?? encodeXToken(getBookmarkNextXToken()),
       source: "cache",
       apiChargeUsd: getApiChargeUsd(),
       estimatedApiUsageUsd: getEstimatedApiUsageUsd()

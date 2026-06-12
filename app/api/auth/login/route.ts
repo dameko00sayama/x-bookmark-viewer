@@ -14,6 +14,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.redirect(url);
   } catch {
-    return NextResponse.redirect(new URL("/?error=missing_config", process.env.APP_BASE_URL ?? "http://localhost:8080"));
+    return NextResponse.redirect(new URL("/auth?error=missing_config", process.env.APP_BASE_URL ?? "http://localhost:8181"));
   }
 }

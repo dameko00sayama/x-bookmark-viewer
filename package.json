@@ -1,11 +1,11 @@
 {
   "name": "x-bookmark-viewer",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 8080",
+    "dev": "next dev -p 8181",
     "build": "next build",
-    "start": "next start -p 8080",
+    "start": "next start -p 8181",
     "lint": "next lint",
     "db:backup": "node scripts/db-backup.mjs",
     "db:restore": "node scripts/db-restore.mjs"

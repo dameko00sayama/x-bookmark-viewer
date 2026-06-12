@@ -40,12 +40,19 @@ export type BookmarkTweet = {
   text: string;
   createdAt: string | null;
   cachedAt?: string | null;
+  bookmarkedBy?: BookmarkAccount[];
   author: BookmarkAuthor | null;
   media: BookmarkMedia[];
   note: string | null;
   collapsed: boolean;
   tags: BookmarkTag[];
   quotedTweet: QuotedBookmarkTweet | null;
+};
+
+export type BookmarkAccount = {
+  userId: string;
+  username: string | null;
+  name: string | null;
 };
 
 export type BookmarkPage = {
@@ -111,7 +118,7 @@ function assertWithinApiCharge(estimatedCostUsd: number) {
 }
 
 function getBaseUrl(defaultBaseUrl?: string) {
-  return process.env.APP_BASE_URL ?? defaultBaseUrl ?? "http://localhost:8080";
+  return process.env.APP_BASE_URL ?? defaultBaseUrl ?? "http://localhost:8181";
 }
 
 function getCallbackUrl(defaultBaseUrl?: string) {
@@ -154,15 +161,17 @@ async function postToken(body: URLSearchParams): Promise<TokenResponse> {
 }
 
 export function buildAuthorizationUrl(state: string, codeChallenge: string, defaultBaseUrl?: string) {
-  const url = new URL("https://x.com/i/oauth2/authorize");
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("client_id", getRequiredEnv("X_CLIENT_ID"));
-  url.searchParams.set("redirect_uri", getCallbackUrl(defaultBaseUrl));
-  url.searchParams.set("scope", getScopes());
-  url.searchParams.set("state", state);
-  url.searchParams.set("code_challenge", codeChallenge);
-  url.searchParams.set("code_challenge_method", "S256");
-  return url;
+  const params = [
+    ["response_type", "code"],
+    ["client_id", getRequiredEnv("X_CLIENT_ID")],
+    ["redirect_uri", getCallbackUrl(defaultBaseUrl)],
+    ["scope", getScopes()],
+    ["state", state],
+    ["code_challenge", codeChallenge],
+    ["code_challenge_method", "S256"]
+  ];
+  const query = params.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join("&");
+  return new URL(`https://x.com/i/oauth2/authorize?${query}`);
 }
 
 export async function exchangeCodeForToken(code: string, verifier: string) {

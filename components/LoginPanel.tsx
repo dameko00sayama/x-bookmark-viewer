@@ -21,7 +21,7 @@ export default function LoginPanel({ error }: LoginPanelProps) {
           </div>
         ) : null}
         <a
-          href="/api/auth/login"
+          href="/auth"
           className="inline-flex rounded-md bg-white px-5 py-3 text-sm font-semibold text-ink transition hover:bg-slate-200"
         >
           Xでログイン

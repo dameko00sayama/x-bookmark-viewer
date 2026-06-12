@@ -23,6 +23,13 @@ type AuthState = "checking" | "anonymous" | "authenticated";
 type LoadingMode = "cache" | "refresh" | "sync" | "more";
 type MenuPanel = "search" | "tag-filter" | "tag-settings";
 
+type AccountSummary = {
+  userId: string;
+  username: string | null;
+  name: string | null;
+  active: boolean;
+};
+
 const TAG_COLORS = ["#38bdf8", "#34d399", "#f59e0b", "#f472b6", "#a78bfa", "#f87171", "#94a3b8"];
 
 const menuItems: { id: MenuPanel; label: string }[] = [
@@ -61,6 +68,7 @@ export default function BookmarkViewer() {
   const [modalImage, setModalImage] = useState<{ url: string; altText: string | null } | null>(null);
   const [undoTweet, setUndoTweet] = useState<BookmarkTweet | null>(null);
   const [tags, setTags] = useState<BookmarkTag[]>([]);
+  const [accounts, setAccounts] = useState<AccountSummary[]>([]);
   const [activeMenu, setActiveMenu] = useState<MenuPanel | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTagIds, setActiveTagIds] = useState<number[]>([]);
@@ -244,6 +252,7 @@ export default function BookmarkViewer() {
 
       if (payload.authenticated) {
         setAuth("authenticated");
+        setAccounts(Array.isArray(payload.accounts) ? payload.accounts : []);
         await loadTags().catch(() => undefined);
         await loadBookmarks("cache");
       } else {
@@ -290,6 +299,7 @@ export default function BookmarkViewer() {
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
     setAuth("anonymous");
+    setAccounts([]);
     setItems([]);
     nextTokenRef.current = null;
     setNextToken(null);
@@ -514,6 +524,7 @@ export default function BookmarkViewer() {
   const loading = loadingMode !== null;
   const refreshLoading = loadingMode === "refresh";
   const syncLoading = loadingMode === "sync";
+  const activeAccount = accounts.find((account) => account.active) ?? accounts[0] ?? null;
   const sourceLabel =
     lastSource === "x" ? "X APIから取得済み" : lastSource === "cache" ? "ローカルキャッシュを表示中" : null;
 
@@ -523,6 +534,12 @@ export default function BookmarkViewer() {
         <div className="mx-auto flex max-w-[760px] items-center justify-between">
           <div>
             <h1 className="text-lg font-semibold text-white">X Bookmark Viewer</h1>
+            {accounts.length > 0 ? (
+              <p className="text-xs text-slate-400">
+                {accounts.length} account{accounts.length === 1 ? "" : "s"}
+                {activeAccount ? ` / active @${activeAccount.username ?? activeAccount.userId}` : ""}
+              </p>
+            ) : null}
             <p className="text-sm text-quiet">ブックマーク専用</p>
             <p className="text-xs text-slate-400">v{version}</p>
             {sourceLabel ? <p className="text-xs text-sky-200">{sourceLabel}</p> : null}
@@ -610,6 +627,16 @@ export default function BookmarkViewer() {
                 ) : null}
                 {syncLoading ? "同期中" : syncSucceeded ? "同期済み" : "同期"}
               </span>
+            </button>
+            <button
+              type="button"
+              className="rounded-md border border-line px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-panel"
+              onClick={() => {
+                window.location.href = "/auth";
+              }}
+              disabled={loading}
+            >
+              Add account
             </button>
             <button
               type="button"

@@ -1,4 +1,17 @@
-# Changelog
+﻿# Changelog
+
+## v3.0.0 - 2026-06-12
+
+- Feature: Add `/auth` as the dedicated account authentication and management page.
+- Feature: Support multiple authorized X accounts in one local SQLite database.
+- Feature: Add active account switching; fetch, sync, bookmark removal, and Undo target the active account.
+- Feature: Show bookmark origin accounts on each integrated bookmark card.
+- Feature: Split account ownership into `accounts` and `account_bookmarks` while keeping tweet-local tags, notes, and collapsed state shared by tweet id.
+- Feature: Keep existing ordering stable and place future fetched pages from the active account at the top of the integrated view.
+- Chore: Move v3 local runtime and OAuth callback to port `8181`.
+- Chore: Add `docker-compose.test.yml` for an isolated v3 test container, image, and volume.
+- Chore: Bump app version to v3.0.0.
+- Docs: Rewrite README and operation/development guidance for v3 multi-account usage and 8080-to-8181 data migration.
 
 ## v2.1.0 - 2026-06-10
 
@@ -37,8 +50,8 @@
 
 ## v1.4.0 - 2026-05-29
 
-- Feature: Rename the header refresh action to "取得" to reflect that it only fetches the latest page.
-- Feature: Add a confirmed "同期" action that fetches all X bookmark pages and marks locally cached items missing from X as unbookmarked.
+- Feature: Rename the header refresh action to "蜿門ｾ・ to reflect that it only fetches the latest page.
+- Feature: Add a confirmed "蜷梧悄" action that fetches all X bookmark pages and marks locally cached items missing from X as unbookmarked.
 - Feature: Track X bookmark state locally so unbookmarked cached tweets can be hidden without deleting local data.
 - Chore: Bump app version to v1.4.0.
 
@@ -58,7 +71,7 @@
 
 - Feature: Show refresh progress with a spinner, progress bar, and temporary success checkmark.
 - Feature: Display whether the current bookmark list came from X API or the local cache.
-- Docs: Document the local development policy to keep the app on port 8080.
+- Docs: Document the local development policy to keep the app on port 8181.
 
 ## v1.2.0 - 2026-05-28
 
@@ -94,11 +107,13 @@
 - Fix: Use `https://x.com/i/oauth2/authorize` in `lib/x-api.ts` (OAuth authorization URL)
 - Fix: Include response body in OAuth token and user fetch errors in `lib/x-api.ts`
 - Fix: Log OAuth callback errors and include `reason` query param in `app/api/auth/callback/x/route.ts`
-- Fix: Default `missing_config` redirect to `http://localhost:8080` in `app/api/auth/login/route.ts`
+- Fix: Default `missing_config` redirect to `http://localhost:8181` in `app/api/auth/login/route.ts`
 - Feature: Display detailed login failure reason (when provided) in `components/BookmarkViewer.tsx`
 - Feature: Web fallback to fetch full tweet text when API-provided text is truncated (`lib/x-api.ts`)
 - Feature: Server-side `?expand=thread` for `/api/tweets/[tweetId]` to assemble thread text (`app/api/tweets/[tweetId]/route.ts`)
-- Chore: Cleaned `.next`, rebuilt, and restarted dev server on port 8080 during debugging
+- Chore: Cleaned `.next`, rebuilt, and restarted dev server on port 8181 during debugging
 
 Notes:
 - These changes were committed locally. They have not been pushed to GitHub.
+
+

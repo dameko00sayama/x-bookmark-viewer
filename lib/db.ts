@@ -6,9 +6,18 @@ import type { BookmarkTag, BookmarkTweet } from "./x-api";
 
 export type StoredAuth = {
   userId: string;
+  username?: string | null;
+  name?: string | null;
   accessToken: string;
   refreshToken: string | null;
   expiresAt: number;
+};
+
+export type StoredAccount = {
+  userId: string;
+  username: string | null;
+  name: string | null;
+  active: boolean;
 };
 
 export type StoredOAuthState = {
@@ -44,6 +53,18 @@ function getDb() {
         updated_at INTEGER NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS accounts (
+        user_id TEXT PRIMARY KEY,
+        username TEXT,
+        name TEXT,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT,
+        expires_at INTEGER NOT NULL,
+        active INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
@@ -63,6 +84,19 @@ function getDb() {
         sort_order INTEGER NOT NULL,
         cached_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS account_bookmarks (
+        account_user_id TEXT NOT NULL,
+        tweet_id TEXT NOT NULL,
+        sort_order INTEGER NOT NULL,
+        x_bookmarked INTEGER NOT NULL DEFAULT 1,
+        last_seen_on_x_at INTEGER,
+        unbookmarked_at INTEGER,
+        cached_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (account_user_id, tweet_id),
+        FOREIGN KEY (account_user_id) REFERENCES accounts(user_id) ON DELETE CASCADE
       );
 
       CREATE TABLE IF NOT EXISTS api_usage (
@@ -114,14 +148,125 @@ function getDb() {
     ensureColumn(db, "cached_bookmark_tweets", "x_bookmarked", "INTEGER NOT NULL DEFAULT 1");
     ensureColumn(db, "cached_bookmark_tweets", "last_seen_on_x_at", "INTEGER");
     ensureColumn(db, "cached_bookmark_tweets", "unbookmarked_at", "INTEGER");
+    migrateLegacyAuthToAccounts(db);
   }
 
   return db;
 }
 
+function migrateLegacyAuthToAccounts(db: Database.Database) {
+  const legacy = db
+    .prepare("SELECT user_id, access_token, refresh_token, expires_at, updated_at FROM auth WHERE id = 'default'")
+    .get() as
+    | {
+        user_id: string;
+        access_token: string;
+        refresh_token: string | null;
+        expires_at: number;
+        updated_at: number;
+      }
+    | undefined;
+
+  if (!legacy) {
+    return;
+  }
+
+  const existing = db.prepare("SELECT user_id FROM accounts WHERE user_id = ?").get(legacy.user_id);
+  if (!existing) {
+    db.prepare(
+      `
+      INSERT INTO accounts (
+        user_id,
+        username,
+        name,
+        access_token,
+        refresh_token,
+        expires_at,
+        active,
+        created_at,
+        updated_at
+      )
+      VALUES (?, NULL, NULL, ?, ?, ?, 1, ?, ?)
+    `
+    ).run(
+      legacy.user_id,
+      legacy.access_token,
+      legacy.refresh_token,
+      legacy.expires_at,
+      legacy.updated_at,
+      legacy.updated_at
+    );
+    db.prepare("UPDATE accounts SET active = CASE WHEN user_id = ? THEN 1 ELSE 0 END").run(legacy.user_id);
+  }
+
+  db.prepare(
+    `
+    INSERT OR IGNORE INTO account_bookmarks (
+      account_user_id,
+      tweet_id,
+      sort_order,
+      x_bookmarked,
+      last_seen_on_x_at,
+      unbookmarked_at,
+      cached_at,
+      updated_at
+    )
+    SELECT
+      ?,
+      tweet_id,
+      sort_order,
+      x_bookmarked,
+      last_seen_on_x_at,
+      unbookmarked_at,
+      cached_at,
+      updated_at
+    FROM cached_bookmark_tweets
+  `
+  ).run(legacy.user_id);
+}
+
 export function saveAuth(auth: StoredAuth) {
-  getDb()
-    .prepare(
+  const db = getDb();
+  const now = Date.now();
+  const encryptedAccessToken = encryptText(auth.accessToken);
+  const encryptedRefreshToken = auth.refreshToken ? encryptText(auth.refreshToken) : null;
+
+  db.transaction(() => {
+    db.prepare("UPDATE accounts SET active = 0").run();
+    db.prepare(
+      `
+      INSERT INTO accounts (
+        user_id,
+        username,
+        name,
+        access_token,
+        refresh_token,
+        expires_at,
+        active,
+        created_at,
+        updated_at
+      )
+      VALUES (@userId, @username, @name, @accessToken, @refreshToken, @expiresAt, 1, @updatedAt, @updatedAt)
+      ON CONFLICT(user_id) DO UPDATE SET
+        username = COALESCE(excluded.username, accounts.username),
+        name = COALESCE(excluded.name, accounts.name),
+        access_token = excluded.access_token,
+        refresh_token = excluded.refresh_token,
+        expires_at = excluded.expires_at,
+        active = 1,
+        updated_at = excluded.updated_at
+    `
+    ).run({
+      userId: auth.userId,
+      username: auth.username ?? null,
+      name: auth.name ?? null,
+      accessToken: encryptedAccessToken,
+      refreshToken: encryptedRefreshToken,
+      expiresAt: auth.expiresAt,
+      updatedAt: now
+    });
+
+    db.prepare(
       `
       INSERT INTO auth (id, user_id, access_token, refresh_token, expires_at, updated_at)
       VALUES ('default', @userId, @accessToken, @refreshToken, @expiresAt, @updatedAt)
@@ -132,22 +277,31 @@ export function saveAuth(auth: StoredAuth) {
         expires_at = excluded.expires_at,
         updated_at = excluded.updated_at
     `
-    )
-    .run({
+    ).run({
       userId: auth.userId,
-      accessToken: encryptText(auth.accessToken),
-      refreshToken: auth.refreshToken ? encryptText(auth.refreshToken) : null,
+      accessToken: encryptedAccessToken,
+      refreshToken: encryptedRefreshToken,
       expiresAt: auth.expiresAt,
-      updatedAt: Date.now()
+      updatedAt: now
     });
+  })();
 }
 
 export function getAuth(): StoredAuth | null {
   const row = getDb()
-    .prepare("SELECT user_id, access_token, refresh_token, expires_at FROM auth WHERE id = 'default'")
+    .prepare(
+      `
+      SELECT user_id, username, name, access_token, refresh_token, expires_at
+      FROM accounts
+      ORDER BY active DESC, updated_at DESC
+      LIMIT 1
+    `
+    )
     .get() as
     | {
         user_id: string;
+        username: string | null;
+        name: string | null;
         access_token: string;
         refresh_token: string | null;
         expires_at: number;
@@ -160,6 +314,8 @@ export function getAuth(): StoredAuth | null {
 
   return {
     userId: row.user_id,
+    username: row.username,
+    name: row.name,
     accessToken: decryptText(row.access_token),
     refreshToken: row.refresh_token ? decryptText(row.refresh_token) : null,
     expiresAt: row.expires_at
@@ -167,7 +323,47 @@ export function getAuth(): StoredAuth | null {
 }
 
 export function clearAuth() {
-  getDb().prepare("DELETE FROM auth WHERE id = 'default'").run();
+  const db = getDb();
+
+  db.transaction(() => {
+    db.prepare("DELETE FROM accounts").run();
+    db.prepare("DELETE FROM auth WHERE id = 'default'").run();
+  })();
+}
+
+export function getAccounts(): StoredAccount[] {
+  const rows = getDb()
+    .prepare(
+      `
+      SELECT user_id, username, name, active
+      FROM accounts
+      ORDER BY active DESC, username COLLATE NOCASE ASC, user_id ASC
+    `
+    )
+    .all() as { user_id: string; username: string | null; name: string | null; active: number }[];
+
+  return rows.map((row) => ({
+    userId: row.user_id,
+    username: row.username,
+    name: row.name,
+    active: row.active === 1
+  }));
+}
+
+export function setActiveAccount(userId: string) {
+  const db = getDb();
+  const account = db.prepare("SELECT user_id FROM accounts WHERE user_id = ?").get(userId) as
+    | { user_id: string }
+    | undefined;
+
+  if (!account) {
+    throw new Error("ACCOUNT_NOT_FOUND");
+  }
+
+  db.transaction(() => {
+    db.prepare("UPDATE accounts SET active = CASE WHEN user_id = ? THEN 1 ELSE 0 END").run(userId);
+    db.prepare("UPDATE auth SET user_id = ? WHERE id = 'default'").run(userId);
+  })();
 }
 
 export function saveOAuthState(state: string, verifier: string) {
@@ -269,6 +465,73 @@ function attachTags(items: BookmarkTweet[]) {
   }));
 }
 
+function getAccountsForTweetIds(tweetIds: string[]) {
+  const uniqueIds = [...new Set(tweetIds)].filter(Boolean);
+  if (uniqueIds.length === 0) {
+    return new Map<string, NonNullable<BookmarkTweet["bookmarkedBy"]>>();
+  }
+
+  const placeholders = uniqueIds.map(() => "?").join(", ");
+  const rows = getDb()
+    .prepare(
+      `
+      SELECT
+        account_bookmarks.tweet_id,
+        accounts.user_id,
+        accounts.username,
+        accounts.name
+      FROM account_bookmarks
+      INNER JOIN accounts ON accounts.user_id = account_bookmarks.account_user_id
+      WHERE account_bookmarks.x_bookmarked = 1
+        AND account_bookmarks.tweet_id IN (${placeholders})
+      ORDER BY accounts.username COLLATE NOCASE ASC, accounts.user_id ASC
+    `
+    )
+    .all(...uniqueIds) as {
+    tweet_id: string;
+    user_id: string;
+    username: string | null;
+    name: string | null;
+  }[];
+
+  const accountsByTweetId = new Map<string, NonNullable<BookmarkTweet["bookmarkedBy"]>>();
+  for (const row of rows) {
+    const current = accountsByTweetId.get(row.tweet_id) ?? [];
+    current.push({
+      userId: row.user_id,
+      username: row.username,
+      name: row.name
+    });
+    accountsByTweetId.set(row.tweet_id, current);
+  }
+
+  return accountsByTweetId;
+}
+
+function attachBookmarkAccounts(items: BookmarkTweet[]) {
+  const accountsByTweetId = getAccountsForTweetIds(items.map((item) => item.id));
+  return items.map((item) => ({
+    ...item,
+    bookmarkedBy: accountsByTweetId.get(item.id) ?? item.bookmarkedBy ?? []
+  }));
+}
+
+function attachLocalState(items: BookmarkTweet[]) {
+  return attachBookmarkAccounts(attachTags(items));
+}
+
+function getActiveAccountId() {
+  const auth = getAuth();
+  if (!auth) {
+    throw new Error("AUTH_REQUIRED");
+  }
+  return auth.userId;
+}
+
+function bookmarkSettingKey(key: string, accountUserId = getAuth()?.userId) {
+  return accountUserId ? `${accountUserId}:${key}` : key;
+}
+
 export function getSetting(key: string): string | null {
   const row = getDb()
     .prepare("SELECT value FROM settings WHERE key = ?")
@@ -295,26 +558,53 @@ export function setSetting(key: string, value: string | null) {
     .run(key, value, Date.now());
 }
 
+export function getBookmarkNextXToken() {
+  return getSetting(bookmarkSettingKey("bookmarks_next_x_token"));
+}
+
 export function getCachedBookmarkCount() {
   const row = getDb()
-    .prepare("SELECT COUNT(*) AS count FROM cached_bookmark_tweets WHERE x_bookmarked = 1")
+    .prepare(
+      `
+      SELECT COUNT(DISTINCT tweet_id) AS count
+      FROM account_bookmarks
+      WHERE x_bookmarked = 1
+    `
+    )
     .get() as { count: number };
   return row.count;
 }
 
 export function getActiveCachedBookmarkIds() {
+  const accountUserId = getActiveAccountId();
   const rows = getDb()
     .prepare(
       `
       SELECT tweet_id
-      FROM cached_bookmark_tweets
-      WHERE x_bookmarked = 1
+      FROM account_bookmarks
+      WHERE account_user_id = ?
+        AND x_bookmarked = 1
       ORDER BY sort_order ASC, cached_at DESC
     `
     )
-    .all() as { tweet_id: string }[];
+    .all(accountUserId) as { tweet_id: string }[];
 
   return rows.map((row) => row.tweet_id);
+}
+
+export function getActiveCachedBookmarkCount() {
+  const accountUserId = getActiveAccountId();
+  const row = getDb()
+    .prepare(
+      `
+      SELECT COUNT(*) AS count
+      FROM account_bookmarks
+      WHERE account_user_id = ?
+        AND x_bookmarked = 1
+    `
+    )
+    .get(accountUserId) as { count: number };
+  return row.count;
 }
 
 export function getCachedBookmarkPage(offset = 0, limit = 50): CachedBookmarkPage {
@@ -322,19 +612,30 @@ export function getCachedBookmarkPage(offset = 0, limit = 50): CachedBookmarkPag
     .prepare(
       `
       SELECT
+        cached_bookmark_tweets.tweet_id,
         cached_bookmark_tweets.payload,
-        cached_bookmark_tweets.cached_at,
+        MAX(account_bookmarks.cached_at) AS cached_at,
+        MIN(account_bookmarks.sort_order) AS sort_order,
         bookmark_notes.note,
         bookmark_view_states.collapsed
       FROM cached_bookmark_tweets
+      INNER JOIN account_bookmarks ON account_bookmarks.tweet_id = cached_bookmark_tweets.tweet_id
       LEFT JOIN bookmark_notes ON bookmark_notes.tweet_id = cached_bookmark_tweets.tweet_id
       LEFT JOIN bookmark_view_states ON bookmark_view_states.tweet_id = cached_bookmark_tweets.tweet_id
-      WHERE cached_bookmark_tweets.x_bookmarked = 1
-      ORDER BY cached_bookmark_tweets.sort_order ASC, cached_bookmark_tweets.cached_at DESC
+      WHERE account_bookmarks.x_bookmarked = 1
+      GROUP BY cached_bookmark_tweets.tweet_id
+      ORDER BY sort_order ASC, cached_at DESC
       LIMIT ? OFFSET ?
     `
     )
-    .all(limit, offset) as { payload: string; cached_at: number; note: string | null; collapsed: number | null }[];
+    .all(limit, offset) as {
+    tweet_id: string;
+    payload: string;
+    cached_at: number;
+    sort_order: number;
+    note: string | null;
+    collapsed: number | null;
+  }[];
 
   const total = getCachedBookmarkCount();
 
@@ -346,7 +647,7 @@ export function getCachedBookmarkPage(offset = 0, limit = 50): CachedBookmarkPag
     }));
 
   return {
-    items: attachTags(items),
+    items: attachLocalState(items),
     nextToken: offset + rows.length < total ? `cache:${offset + rows.length}` : null
   };
 }
@@ -381,19 +682,20 @@ export function applyLocalBookmarkState(items: BookmarkTweet[]) {
     };
   });
 
-  return attachTags(withLocalState);
+  return attachLocalState(withLocalState);
 }
 
 export function saveCachedBookmarkPage(items: BookmarkTweet[], offset: number, nextXToken: string | null) {
   const now = Date.now();
   const db = getDb();
+  const accountUserId = getActiveAccountId();
 
   db.transaction(() => {
     if (offset === 0 && items.length > 0) {
-      db.prepare("UPDATE cached_bookmark_tweets SET sort_order = sort_order + ?").run(items.length);
+      db.prepare("UPDATE account_bookmarks SET sort_order = sort_order + ?").run(items.length);
     }
 
-    const statement = db.prepare(
+    const tweetStatement = db.prepare(
       `
       INSERT INTO cached_bookmark_tweets (
         tweet_id,
@@ -408,26 +710,48 @@ export function saveCachedBookmarkPage(items: BookmarkTweet[], offset: number, n
       VALUES (@tweetId, @payload, @sortOrder, @cachedAt, @updatedAt, 1, @cachedAt, NULL)
       ON CONFLICT(tweet_id) DO UPDATE SET
         payload = excluded.payload,
-        sort_order = excluded.sort_order,
         cached_at = excluded.cached_at,
-        updated_at = excluded.updated_at,
+        updated_at = excluded.updated_at
+    `
+    );
+
+    const bookmarkStatement = db.prepare(
+      `
+      INSERT INTO account_bookmarks (
+        account_user_id,
+        tweet_id,
+        sort_order,
+        x_bookmarked,
+        last_seen_on_x_at,
+        unbookmarked_at,
+        cached_at,
+        updated_at
+      )
+      VALUES (@accountUserId, @tweetId, @sortOrder, 1, @cachedAt, NULL, @cachedAt, @updatedAt)
+      ON CONFLICT(account_user_id, tweet_id) DO UPDATE SET
+        sort_order = excluded.sort_order,
         x_bookmarked = 1,
-        last_seen_on_x_at = excluded.cached_at,
-        unbookmarked_at = NULL
+        last_seen_on_x_at = excluded.last_seen_on_x_at,
+        unbookmarked_at = NULL,
+        cached_at = excluded.cached_at,
+        updated_at = excluded.updated_at
     `
     );
 
     items.forEach((item, index) => {
-      statement.run({
+      const values = {
+        accountUserId,
         tweetId: item.id,
         payload: JSON.stringify(item),
         sortOrder: offset + index,
         cachedAt: now,
         updatedAt: now
-      });
+      };
+      tweetStatement.run(values);
+      bookmarkStatement.run(values);
     });
 
-    setSetting("bookmarks_next_x_token", nextXToken);
+    setSetting(bookmarkSettingKey("bookmarks_next_x_token", accountUserId), nextXToken);
   })();
 
   return applyLocalBookmarkState(items.map((item) => ({ ...item, cachedAt: new Date(now).toISOString() })));
@@ -436,9 +760,10 @@ export function saveCachedBookmarkPage(items: BookmarkTweet[], offset: number, n
 export function saveSyncedBookmarkPage(items: BookmarkTweet[], offset: number) {
   const now = Date.now();
   const db = getDb();
+  const accountUserId = getActiveAccountId();
 
   db.transaction(() => {
-    const statement = db.prepare(
+    const tweetStatement = db.prepare(
       `
       INSERT INTO cached_bookmark_tweets (
         tweet_id,
@@ -453,23 +778,45 @@ export function saveSyncedBookmarkPage(items: BookmarkTweet[], offset: number) {
       VALUES (@tweetId, @payload, @sortOrder, @cachedAt, @updatedAt, 1, @cachedAt, NULL)
       ON CONFLICT(tweet_id) DO UPDATE SET
         payload = excluded.payload,
-        sort_order = excluded.sort_order,
         cached_at = excluded.cached_at,
-        updated_at = excluded.updated_at,
+        updated_at = excluded.updated_at
+    `
+    );
+
+    const bookmarkStatement = db.prepare(
+      `
+      INSERT INTO account_bookmarks (
+        account_user_id,
+        tweet_id,
+        sort_order,
+        x_bookmarked,
+        last_seen_on_x_at,
+        unbookmarked_at,
+        cached_at,
+        updated_at
+      )
+      VALUES (@accountUserId, @tweetId, @sortOrder, 1, @cachedAt, NULL, @cachedAt, @updatedAt)
+      ON CONFLICT(account_user_id, tweet_id) DO UPDATE SET
+        sort_order = excluded.sort_order,
         x_bookmarked = 1,
         last_seen_on_x_at = excluded.last_seen_on_x_at,
-        unbookmarked_at = NULL
+        unbookmarked_at = NULL,
+        cached_at = excluded.cached_at,
+        updated_at = excluded.updated_at
     `
     );
 
     items.forEach((item, index) => {
-      statement.run({
+      const values = {
+        accountUserId,
         tweetId: item.id,
         payload: JSON.stringify(item),
         sortOrder: offset + index,
         cachedAt: now,
         updatedAt: now
-      });
+      };
+      tweetStatement.run(values);
+      bookmarkStatement.run(values);
     });
   })();
 
@@ -479,6 +826,7 @@ export function saveSyncedBookmarkPage(items: BookmarkTweet[], offset: number) {
 export function markBookmarksNotSeenOnX(seenTweetIds: string[], targetTweetIds: string[]) {
   const now = Date.now();
   const db = getDb();
+  const accountUserId = getActiveAccountId();
   const uniqueIds = [...new Set(seenTweetIds)].filter(Boolean);
   const uniqueTargetIds = [...new Set(targetTweetIds)].filter(Boolean);
 
@@ -518,15 +866,40 @@ export function markBookmarksNotSeenOnX(seenTweetIds: string[], targetTweetIds: 
       )
       .run(now, now);
 
+    const accountResult = db
+      .prepare(
+        `
+        UPDATE account_bookmarks
+        SET x_bookmarked = 0,
+            unbookmarked_at = COALESCE(unbookmarked_at, ?),
+            updated_at = ?
+        WHERE account_user_id = ?
+          AND x_bookmarked = 1
+          AND EXISTS (
+            SELECT 1 FROM sync_target_bookmark_ids
+            WHERE sync_target_bookmark_ids.tweet_id = account_bookmarks.tweet_id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM synced_bookmark_ids
+            WHERE synced_bookmark_ids.tweet_id = account_bookmarks.tweet_id
+          )
+      `
+      )
+      .run(now, now, accountUserId);
+
     db.prepare("DELETE FROM synced_bookmark_ids").run();
     db.prepare("DELETE FROM sync_target_bookmark_ids").run();
-    return result.changes;
+    return accountResult.changes || result.changes;
   })();
 }
 
 export function markBookmarkXState(tweetId: string, xBookmarked: boolean) {
   const now = Date.now();
-  getDb()
+  const db = getDb();
+  const accountUserId = getActiveAccountId();
+
+  db.transaction(() => {
+    db
     .prepare(
       `
       UPDATE cached_bookmark_tweets
@@ -538,11 +911,45 @@ export function markBookmarkXState(tweetId: string, xBookmarked: boolean) {
     `
     )
     .run(xBookmarked ? 1 : 0, xBookmarked ? 1 : 0, now, xBookmarked ? 1 : 0, now, now, tweetId);
+
+    db.prepare(
+      `
+      INSERT INTO account_bookmarks (
+        account_user_id,
+        tweet_id,
+        sort_order,
+        x_bookmarked,
+        last_seen_on_x_at,
+        unbookmarked_at,
+        cached_at,
+        updated_at
+      )
+      VALUES (?, ?, 0, ?, ?, ?, ?, ?)
+      ON CONFLICT(account_user_id, tweet_id) DO UPDATE SET
+        x_bookmarked = excluded.x_bookmarked,
+        last_seen_on_x_at = CASE WHEN excluded.x_bookmarked = 1 THEN excluded.last_seen_on_x_at ELSE account_bookmarks.last_seen_on_x_at END,
+        unbookmarked_at = CASE WHEN excluded.x_bookmarked = 1 THEN NULL ELSE COALESCE(account_bookmarks.unbookmarked_at, excluded.unbookmarked_at) END,
+        updated_at = excluded.updated_at
+    `
+    ).run(
+      accountUserId,
+      tweetId,
+      xBookmarked ? 1 : 0,
+      xBookmarked ? now : null,
+      xBookmarked ? null : now,
+      now,
+      now
+    );
+  })();
 }
 
 export function saveCachedTweet(tweet: BookmarkTweet) {
   const now = Date.now();
-  getDb()
+  const db = getDb();
+  const accountUserId = getActiveAccountId();
+
+  db.transaction(() => {
+    db
     .prepare(
       `
       INSERT INTO cached_bookmark_tweets (tweet_id, payload, sort_order, cached_at, updated_at)
@@ -562,6 +969,29 @@ export function saveCachedTweet(tweet: BookmarkTweet) {
       cachedAt: now,
       updatedAt: now
     });
+
+    db.prepare(
+      `
+      INSERT INTO account_bookmarks (
+        account_user_id,
+        tweet_id,
+        sort_order,
+        x_bookmarked,
+        last_seen_on_x_at,
+        unbookmarked_at,
+        cached_at,
+        updated_at
+      )
+      VALUES (?, ?, 0, 1, ?, NULL, ?, ?)
+      ON CONFLICT(account_user_id, tweet_id) DO UPDATE SET
+        x_bookmarked = 1,
+        last_seen_on_x_at = excluded.last_seen_on_x_at,
+        unbookmarked_at = NULL,
+        cached_at = excluded.cached_at,
+        updated_at = excluded.updated_at
+    `
+    ).run(accountUserId, tweet.id, now, now, now);
+  })();
 
   return applyLocalBookmarkState([{ ...tweet, cachedAt: new Date(now).toISOString() }])[0];
 }

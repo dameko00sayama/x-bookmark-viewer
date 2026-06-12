@@ -229,8 +229,8 @@ export default function BookmarkCard({ tweet, tags, onRemove, onImageClick, onTa
   const tagRibbonRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setLocalTweet((current) => ({ ...current, tags: tweet.tags }));
-  }, [tweet.tags]);
+    setLocalTweet((current) => ({ ...current, bookmarkedBy: tweet.bookmarkedBy, tags: tweet.tags }));
+  }, [tweet.bookmarkedBy, tweet.tags]);
 
   useEffect(() => {
     if (!tagPopoverOpen) {
@@ -441,6 +441,19 @@ export default function BookmarkCard({ tweet, tags, onRemove, onImageClick, onTa
               </span>
             </span>
           </div>
+          {localTweet.bookmarkedBy && localTweet.bookmarkedBy.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {localTweet.bookmarkedBy.map((account) => (
+                <span
+                  key={account.userId}
+                  className="rounded-full border border-slate-700 bg-ink px-2 py-0.5 text-[11px] font-semibold text-slate-300"
+                  title={account.name ?? account.userId}
+                >
+                  @{account.username ?? account.userId}
+                </span>
+              ))}
+            </div>
+          ) : null}
           </div>
         </div>
         <time className="shrink-0 cursor-pointer text-sm text-quiet transition hover:text-sky-300 hover:underline hover:decoration-sky-300/70 hover:underline-offset-2">

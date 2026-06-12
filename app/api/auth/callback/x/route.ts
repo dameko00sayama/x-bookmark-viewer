@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   const storedState = state ? consumeOAuthState(state) : null;
 
   if (!code || !state || !storedState) {
-    return NextResponse.redirect(appUrl("/?error=oauth_state", request.url));
+    return NextResponse.redirect(appUrl("/auth?error=oauth_state", request.url));
   }
 
   try {
@@ -22,14 +22,16 @@ export async function GET(request: NextRequest) {
 
     saveAuth({
       userId: me.id,
+      username: me.username,
+      name: me.name,
       accessToken: token.access_token,
       refreshToken: token.refresh_token ?? null,
       expiresAt: Date.now() + (token.expires_in ?? 7200) * 1000
     });
 
-    return NextResponse.redirect(appUrl("/", request.url));
+    return NextResponse.redirect(appUrl("/auth", request.url));
   } catch {
     console.error("OAuth callback failed");
-    return NextResponse.redirect(appUrl("/?error=oauth_failed", request.url));
+    return NextResponse.redirect(appUrl("/auth?error=oauth_failed", request.url));
   }
 }
