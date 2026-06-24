@@ -575,6 +575,97 @@ export function getCachedBookmarkCount() {
   return row.count;
 }
 
+export function getBookmarkExportData() {
+  const database = getDb();
+  const rows = database
+    .prepare(
+      `
+      SELECT
+        cached_bookmark_tweets.tweet_id,
+        cached_bookmark_tweets.payload,
+        cached_bookmark_tweets.cached_at,
+        cached_bookmark_tweets.updated_at,
+        bookmark_notes.note,
+        bookmark_notes.updated_at AS note_updated_at
+      FROM cached_bookmark_tweets
+      LEFT JOIN bookmark_notes ON bookmark_notes.tweet_id = cached_bookmark_tweets.tweet_id
+      ORDER BY cached_bookmark_tweets.sort_order ASC, cached_bookmark_tweets.cached_at DESC
+    `
+    )
+    .all() as {
+    tweet_id: string;
+    payload: string;
+    cached_at: number;
+    updated_at: number;
+    note: string | null;
+    note_updated_at: number | null;
+  }[];
+
+  const accountRows = database
+    .prepare(
+      `
+      SELECT
+        account_bookmarks.tweet_id,
+        account_bookmarks.account_user_id,
+        accounts.username,
+        accounts.name,
+        account_bookmarks.x_bookmarked,
+        account_bookmarks.last_seen_on_x_at,
+        account_bookmarks.unbookmarked_at,
+        account_bookmarks.cached_at,
+        account_bookmarks.updated_at
+      FROM account_bookmarks
+      LEFT JOIN accounts ON accounts.user_id = account_bookmarks.account_user_id
+      ORDER BY account_bookmarks.tweet_id, account_bookmarks.sort_order ASC
+    `
+    )
+    .all() as {
+    tweet_id: string;
+    account_user_id: string;
+    username: string | null;
+    name: string | null;
+    x_bookmarked: number;
+    last_seen_on_x_at: number | null;
+    unbookmarked_at: number | null;
+    cached_at: number;
+    updated_at: number;
+  }[];
+
+  const accountsByTweetId = new Map<string, typeof accountRows>();
+  for (const accountRow of accountRows) {
+    const current = accountsByTweetId.get(accountRow.tweet_id) ?? [];
+    current.push(accountRow);
+    accountsByTweetId.set(accountRow.tweet_id, current);
+  }
+
+  const tagsByTweetId = getTagsForTweetIds(rows.map((row) => row.tweet_id));
+
+  return rows.map((row) => {
+    const tweet = JSON.parse(row.payload) as BookmarkTweet;
+    const accounts = (accountsByTweetId.get(row.tweet_id) ?? []).map((account) => ({
+      userId: account.account_user_id,
+      username: account.username,
+      name: account.name,
+      bookmarked: account.x_bookmarked === 1,
+      lastSeenOnXAt: account.last_seen_on_x_at ? new Date(account.last_seen_on_x_at).toISOString() : null,
+      unbookmarkedAt: account.unbookmarked_at ? new Date(account.unbookmarked_at).toISOString() : null,
+      cachedAt: new Date(account.cached_at).toISOString(),
+      updatedAt: new Date(account.updated_at).toISOString()
+    }));
+
+    return {
+      ...tweet,
+      note: row.note,
+      tags: tagsByTweetId.get(row.tweet_id) ?? [],
+      bookmarked: accounts.some((account) => account.bookmarked),
+      accounts,
+      cachedAt: new Date(row.cached_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+      noteUpdatedAt: row.note_updated_at ? new Date(row.note_updated_at).toISOString() : null
+    };
+  });
+}
+
 export function getActiveCachedBookmarkIds() {
   const accountUserId = getActiveAccountId();
   const rows = getDb()

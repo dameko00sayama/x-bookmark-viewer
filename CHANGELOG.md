@@ -1,5 +1,14 @@
 ﻿# Changelog
 
+## v3.1.0 - 2026-06-24
+
+- Feature: Export all cached bookmarks, including unbookmarked records, from one UI action.
+- Feature: Bundle structured JSON and one-row-per-bookmark CSV files into a single ZIP archive.
+- Feature: Include notes, tags, source URLs, media, quoted posts, and per-account bookmark state without OAuth credentials.
+- Fix: Bind the production container explicitly to `0.0.0.0` so standalone Next.js starts reliably in Docker.
+- Fix: Migrate the existing v3 database from the test-named volume to the formal `x-bookmark-viewer_app-data` volume.
+- Chore: Bump app version to v3.1.0.
+
 ## v3.0.0 - 2026-06-12
 
 - Feature: Add `/auth` as the dedicated account authentication and management page.

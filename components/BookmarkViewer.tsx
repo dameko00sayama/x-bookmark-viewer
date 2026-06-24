@@ -21,7 +21,7 @@ type BookmarkResponse = {
 
 type AuthState = "checking" | "anonymous" | "authenticated";
 type LoadingMode = "cache" | "refresh" | "sync" | "more";
-type MenuPanel = "search" | "tag-filter" | "tag-settings";
+type MenuPanel = "search" | "tag-filter" | "tag-settings" | "data-export";
 
 type AccountSummary = {
   userId: string;
@@ -35,7 +35,8 @@ const TAG_COLORS = ["#38bdf8", "#34d399", "#f59e0b", "#f472b6", "#a78bfa", "#f87
 const menuItems: { id: MenuPanel; label: string }[] = [
   { id: "search", label: "検索" },
   { id: "tag-filter", label: "タグフィルター" },
-  { id: "tag-settings", label: "タグ設定" }
+  { id: "tag-settings", label: "タグ設定" },
+  { id: "data-export", label: "データ出力" }
 ];
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -76,6 +77,8 @@ export default function BookmarkViewer() {
   const [draftTagName, setDraftTagName] = useState("");
   const [draftTagColor, setDraftTagColor] = useState(TAG_COLORS[0]);
   const [tagError, setTagError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const nextTokenRef = useRef<string | null>(null);
   const refreshDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -405,6 +408,34 @@ export default function BookmarkViewer() {
       setDraftTagName("");
     } catch (caught) {
       setTagError(caught instanceof Error ? caught.message : "TAG_CREATE_FAILED");
+    }
+  }
+
+  async function exportBookmarks() {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const response = await fetch("/api/export", { cache: "no-store" });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error ?? "EXPORT_FAILED");
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition");
+      const filename = disposition?.match(/filename="([^"]+)"/)?.[1] ?? "x-bookmarks.zip";
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (caught) {
+      setExportError(caught instanceof Error ? caught.message : "EXPORT_FAILED");
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -921,6 +952,24 @@ export default function BookmarkViewer() {
                   {tags.length === 0 ? <p className="text-quiet">タグがまだありません。</p> : null}
                 </div>
                 {tagError ? <p className="text-xs text-red-200">{tagError}</p> : null}
+              </div>
+            ) : null}
+
+            {activeMenu === "data-export" ? (
+              <div className="space-y-3">
+                <p className="text-xs leading-5 text-slate-300">
+                  現在のブックマークと解除済みデータを、JSONとCSVをまとめたZIPとして保存します。
+                  メモ、タグ、元URL、投稿本文、メディアURL、アカウント別の解除状態を含みます。
+                </p>
+                <button
+                  type="button"
+                  className="w-full rounded-md bg-white px-3 py-2 text-sm font-semibold text-ink hover:bg-slate-200 disabled:opacity-50"
+                  onClick={exportBookmarks}
+                  disabled={exporting}
+                >
+                  {exporting ? "ZIPを作成中…" : "JSON＋CSVをZIPでダウンロード"}
+                </button>
+                {exportError ? <p className="text-xs text-red-200">出力に失敗しました: {exportError}</p> : null}
               </div>
             ) : null}
           </div>
