@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getActiveCachedBookmarkCount,
   getBookmarkNextXToken,
-  getCachedBookmarkCount,
   getCachedBookmarkPage,
   getAuth,
   getEstimatedApiUsageUsd,
@@ -16,22 +15,14 @@ function encodeXToken(token: string | null) {
   return token ? `x:${encodeURIComponent(token)}` : null;
 }
 
-function nextTokenAfterCache(offset: number, itemCount: number) {
-  const total = getCachedBookmarkCount();
-  if (offset + itemCount < total) {
-    return `cache:${offset + itemCount}`;
-  }
-
-  return encodeXToken(getBookmarkNextXToken());
-}
-
+// Ordinary paging exposes only SQLite cursors. X paging requires an explicit fetch action.
 async function fetchAndCacheXPage(paginationToken: string | null, offset: number) {
   const page = await fetchBookmarks(paginationToken);
-  const items = saveCachedBookmarkPage(page.items, offset, page.nextToken);
+  saveCachedBookmarkPage(page.items, offset, page.nextToken);
 
   return {
-    items,
-    nextToken: nextTokenAfterCache(offset, items.length),
+    ...getCachedBookmarkPage(0, PAGE_SIZE),
+    nextXToken: encodeXToken(page.nextToken),
     source: "x",
     apiChargeUsd: getApiChargeUsd(),
     estimatedApiUsageUsd: getEstimatedApiUsageUsd()
@@ -48,14 +39,13 @@ export async function GET(request: NextRequest) {
       throw new AuthRequiredError();
     }
 
-    if (refresh) {
-      const response = await fetchAndCacheXPage(null, 0);
-      return NextResponse.json(response);
+    if (token && !token.startsWith("cache:") && !(refresh && token.startsWith("x:"))) {
+      return NextResponse.json({ error: "INVALID_PAGINATION_TOKEN" }, { status: 400 });
     }
 
-    if (token?.startsWith("x:")) {
-      const xToken = decodeURIComponent(token.slice(2));
-      const response = await fetchAndCacheXPage(xToken, getActiveCachedBookmarkCount());
+    if (refresh) {
+      const xToken = token?.startsWith("x:") ? decodeURIComponent(token.slice(2)) : null;
+      const response = await fetchAndCacheXPage(xToken, xToken ? getActiveCachedBookmarkCount() : 0);
       return NextResponse.json(response);
     }
 
@@ -65,7 +55,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       ...page,
-      nextToken: page.nextToken ?? encodeXToken(getBookmarkNextXToken()),
+      nextXToken: encodeXToken(getBookmarkNextXToken()),
       source: "cache",
       apiChargeUsd: getApiChargeUsd(),
       estimatedApiUsageUsd: getEstimatedApiUsageUsd()

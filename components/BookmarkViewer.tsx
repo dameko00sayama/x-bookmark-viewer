@@ -10,6 +10,7 @@ import LoginPanel from "./LoginPanel";
 type BookmarkResponse = {
   items: BookmarkTweet[];
   nextToken: string | null;
+  nextXToken?: string | null;
   source?: "cache" | "x";
   apiChargeUsd?: number;
   estimatedApiUsageUsd?: number;
@@ -20,8 +21,8 @@ type BookmarkResponse = {
 };
 
 type AuthState = "checking" | "anonymous" | "authenticated";
-type LoadingMode = "cache" | "refresh" | "sync" | "more";
-type MenuPanel = "search" | "tag-filter" | "tag-settings" | "data-export";
+type LoadingMode = "cache" | "refresh" | "fetch-more" | "sync" | "more";
+type MenuPanel = "search" | "tag-filter" | "tag-settings" | "settings" | "data-export";
 
 type AccountSummary = {
   userId: string;
@@ -36,6 +37,7 @@ const menuItems: { id: MenuPanel; label: string }[] = [
   { id: "search", label: "検索" },
   { id: "tag-filter", label: "タグフィルター" },
   { id: "tag-settings", label: "タグ設定" },
+  { id: "settings", label: "設定" },
   { id: "data-export", label: "データ出力" }
 ];
 
@@ -58,6 +60,7 @@ export default function BookmarkViewer() {
   const [auth, setAuth] = useState<AuthState>("checking");
   const [items, setItems] = useState<BookmarkTweet[]>([]);
   const [nextToken, setNextToken] = useState<string | null>(null);
+  const [nextXToken, setNextXToken] = useState<string | null>(null);
   const [loadingMode, setLoadingMode] = useState<LoadingMode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastSource, setLastSource] = useState<BookmarkResponse["source"] | null>(null);
@@ -66,6 +69,7 @@ export default function BookmarkViewer() {
   const [syncSummary, setSyncSummary] = useState<string | null>(null);
   const [apiChargeUsd, setApiChargeUsd] = useState<number | null>(null);
   const [estimatedApiUsageUsd, setEstimatedApiUsageUsd] = useState<number | null>(null);
+  const [apiChargeLimitDraft, setApiChargeLimitDraft] = useState<number>(5);
   const [modalImage, setModalImage] = useState<{ url: string; altText: string | null } | null>(null);
   const [undoTweet, setUndoTweet] = useState<BookmarkTweet | null>(null);
   const [tags, setTags] = useState<BookmarkTag[]>([]);
@@ -80,6 +84,8 @@ export default function BookmarkViewer() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const nextTokenRef = useRef<string | null>(null);
+  const nextXTokenRef = useRef<string | null>(null);
+  const loadingRef = useRef(false);
   const refreshDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -133,21 +139,32 @@ export default function BookmarkViewer() {
   }, []);
 
   const loadBookmarks = useCallback(
-    async (mode: "cache" | "refresh" | "more") => {
+    async (mode: "cache" | "refresh" | "fetch-more" | "more") => {
+      if (
+        loadingRef.current ||
+        (mode === "more" && !nextTokenRef.current?.startsWith("cache:")) ||
+        (mode === "fetch-more" && !nextXTokenRef.current?.startsWith("x:"))
+      ) {
+        return;
+      }
+      loadingRef.current = true;
       if (refreshDoneTimerRef.current) {
         clearTimeout(refreshDoneTimerRef.current);
         refreshDoneTimerRef.current = null;
       }
       setLoadingMode(mode);
       setError(null);
-      if (mode === "refresh") {
+      if (mode === "refresh" || mode === "fetch-more") {
         setRefreshSucceeded(false);
       }
       setSyncSummary(null);
 
       const params = new URLSearchParams();
-      if (mode === "refresh") {
+      if (mode === "refresh" || mode === "fetch-more") {
         params.set("refresh", "1");
+      }
+      if (mode === "fetch-more" && nextXTokenRef.current) {
+        params.set("pagination_token", nextXTokenRef.current);
       }
       if (mode === "more" && nextTokenRef.current) {
         params.set("pagination_token", nextTokenRef.current);
@@ -161,14 +178,23 @@ export default function BookmarkViewer() {
           throw new Error(payload.error ?? "BOOKMARK_FETCH_FAILED");
         }
 
-        setItems((current) => (mode === "more" ? [...current, ...payload.items] : payload.items));
+        setItems((current) => {
+          if (mode !== "more") {
+            return payload.items;
+          }
+
+          const seenIds = new Set(current.map((item) => item.id));
+          return [...current, ...payload.items.filter((item) => !seenIds.has(item.id))];
+        });
         nextTokenRef.current = payload.nextToken;
         setNextToken(payload.nextToken);
+        nextXTokenRef.current = payload.nextXToken ?? null;
+        setNextXToken(nextXTokenRef.current);
         setLastSource(payload.source ?? null);
         setApiChargeUsd(payload.apiChargeUsd ?? null);
         setEstimatedApiUsageUsd(payload.estimatedApiUsageUsd ?? null);
         dismissUndoNotification();
-        if (mode === "refresh") {
+        if (mode === "refresh" || mode === "fetch-more") {
           setRefreshSucceeded(true);
           refreshDoneTimerRef.current = setTimeout(() => {
             setRefreshSucceeded(false);
@@ -182,13 +208,72 @@ export default function BookmarkViewer() {
           setAuth("anonymous");
         }
       } finally {
+        loadingRef.current = false;
         setLoadingMode(null);
       }
     },
     [dismissUndoNotification]
   );
 
+  useEffect(() => {
+    if (apiChargeUsd !== null && Number.isFinite(apiChargeUsd)) {
+      setApiChargeLimitDraft(apiChargeUsd);
+    }
+  }, [apiChargeUsd]);
+
+  async function updateApiChargeLimit(nextLimit: number) {
+    if (!Number.isFinite(nextLimit) || nextLimit <= 0) {
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set-limit", apiChargeUsd: nextLimit })
+      });
+      const payload = (await response.json()) as { apiChargeUsd?: number; estimatedApiUsageUsd?: number; error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "SETTINGS_UPDATE_FAILED");
+      }
+      setApiChargeUsd(payload.apiChargeUsd ?? null);
+      setEstimatedApiUsageUsd(payload.estimatedApiUsageUsd ?? null);
+      setApiChargeLimitDraft(payload.apiChargeUsd ?? nextLimit);
+    } catch (caught) {
+      const code = caught instanceof Error ? caught.message : "SETTINGS_UPDATE_FAILED";
+      setError(ERROR_MESSAGES[code] ?? "設定の更新に失敗しました。");
+    }
+  }
+
+  async function resetApiChargeLimit() {
+    const ok = window.confirm("X APIチャージ上限と利用量の記録を初期値に戻しますか？");
+    if (!ok) {
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset" })
+      });
+      const payload = (await response.json()) as { apiChargeUsd?: number; estimatedApiUsageUsd?: number; error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "SETTINGS_UPDATE_FAILED");
+      }
+      setApiChargeUsd(payload.apiChargeUsd ?? null);
+      setEstimatedApiUsageUsd(payload.estimatedApiUsageUsd ?? null);
+      setApiChargeLimitDraft(payload.apiChargeUsd ?? 5);
+    } catch (caught) {
+      const code = caught instanceof Error ? caught.message : "SETTINGS_UPDATE_FAILED";
+      setError(ERROR_MESSAGES[code] ?? "設定の更新に失敗しました。");
+    }
+  }
+
   async function syncBookmarks() {
+    if (loadingRef.current) {
+      return;
+    }
     const ok = window.confirm(
       "ローカルに取得済みのブックマークだけをX側と照合します。確認のためX API料金が発生する可能性があります。実行しますか？"
     );
@@ -201,6 +286,7 @@ export default function BookmarkViewer() {
       refreshDoneTimerRef.current = null;
     }
 
+    loadingRef.current = true;
     setLoadingMode("sync");
     setError(null);
     setSyncSucceeded(false);
@@ -217,6 +303,8 @@ export default function BookmarkViewer() {
       setItems(payload.items);
       nextTokenRef.current = payload.nextToken;
       setNextToken(payload.nextToken);
+      nextXTokenRef.current = payload.nextXToken ?? null;
+      setNextXToken(nextXTokenRef.current);
       setLastSource(payload.source ?? null);
       setApiChargeUsd(payload.apiChargeUsd ?? null);
       setEstimatedApiUsageUsd(payload.estimatedApiUsageUsd ?? null);
@@ -238,6 +326,7 @@ export default function BookmarkViewer() {
         setAuth("anonymous");
       }
     } finally {
+      loadingRef.current = false;
       setLoadingMode(null);
     }
   }
@@ -305,6 +394,8 @@ export default function BookmarkViewer() {
     setAccounts([]);
     setItems([]);
     nextTokenRef.current = null;
+    nextXTokenRef.current = null;
+    setNextXToken(null);
     setNextToken(null);
     dismissUndoNotification();
   }
@@ -539,6 +630,17 @@ export default function BookmarkViewer() {
     });
   }, [activeTagIds, items, searchQuery, showUntaggedOnly]);
 
+  const hasActiveFilter = Boolean(searchQuery.trim()) || activeTagIds.length > 0 || showUntaggedOnly;
+
+  useEffect(() => {
+    if (!hasActiveFilter || !nextToken?.startsWith("cache:") || loadingMode !== null || error) {
+      return;
+    }
+
+    // Search and tag filters preload the remaining local pages, never the X cursor.
+    void loadBookmarks("more");
+  }, [error, hasActiveFilter, loadBookmarks, loadingMode, nextToken]);
+
   if (auth === "checking") {
     return (
       <main className="mx-auto flex min-h-screen max-w-[760px] items-center justify-center px-6 text-quiet">
@@ -553,34 +655,41 @@ export default function BookmarkViewer() {
 
   const version = packageJson.version ?? "0.0.0";
   const loading = loadingMode !== null;
-  const refreshLoading = loadingMode === "refresh";
+  const refreshLoading = loadingMode === "refresh" || loadingMode === "fetch-more";
   const syncLoading = loadingMode === "sync";
   const activeAccount = accounts.find((account) => account.active) ?? accounts[0] ?? null;
   const sourceLabel =
     lastSource === "x" ? "X APIから取得済み" : lastSource === "cache" ? "ローカルキャッシュを表示中" : null;
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-[760px] px-6 py-8">
-      <header className="sticky top-0 z-20 -mx-6 mb-6 border-b border-line bg-ink/95 px-6 py-4 backdrop-blur">
-        <div className="mx-auto flex max-w-[760px] items-center justify-between">
-          <div>
+    <main className="mx-auto min-h-screen w-full px-3 py-5 sm:px-4 sm:py-8 lg:px-6">
+      <header className="sticky top-0 z-20 -mx-3 mb-6 border-b border-line bg-ink/95 px-3 py-4 backdrop-blur sm:-mx-4 sm:px-4 lg:-mx-6 lg:px-6">
+        <div className="mx-auto flex w-full flex-col gap-3 pl-14">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
             <h1 className="text-lg font-semibold text-white">X Bookmark Viewer</h1>
             {accounts.length > 0 ? (
-              <p className="text-xs text-slate-400">
+              <p className="text-slate-400">
                 {accounts.length} account{accounts.length === 1 ? "" : "s"}
                 {activeAccount ? ` / active @${activeAccount.username ?? activeAccount.userId}` : ""}
               </p>
             ) : null}
-            <p className="text-sm text-quiet">ブックマーク専用</p>
-            <p className="text-xs text-slate-400">v{version}</p>
-            {sourceLabel ? <p className="text-xs text-sky-200">{sourceLabel}</p> : null}
+            <span className="text-quiet">ブックマーク専用</span>
+            <span className="text-slate-400">v{version}</span>
+            {sourceLabel ? <span className="text-sky-200">{sourceLabel}</span> : null}
             {apiChargeUsd !== null && estimatedApiUsageUsd !== null ? (
-              <p className="text-xs text-slate-400">
-                X APIチャージ / 使用量 ${apiChargeUsd} / ${estimatedApiUsageUsd.toFixed(2)}
-              </p>
+              <div className="flex flex-wrap items-center gap-2 text-slate-400">
+                <span>X APIチャージ / 使用量 ${apiChargeUsd} / ${estimatedApiUsageUsd.toFixed(2)}</span>
+                <button
+                  type="button"
+                  className="rounded border border-line px-2 py-0.5 text-[11px] font-semibold text-sky-200 transition hover:bg-ink"
+                  onClick={resetApiChargeLimit}
+                >
+                  上限リセット
+                </button>
+              </div>
             ) : null}
           </div>
-          <div className="flex flex-wrap justify-end gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <button
               type="button"
               className="rounded-md border border-line px-4 py-2 text-sm font-semibold text-slate-100 hover:bg-panel"
@@ -706,7 +815,7 @@ export default function BookmarkViewer() {
         </div>
       ) : null}
 
-      <section ref={listRef} className="space-y-4">
+      <section ref={listRef} className="mx-auto flex w-full max-w-[1200px] flex-col gap-4">
         {filteredItems.map((tweet) => (
           <BookmarkCard
             key={tweet.id}
@@ -732,7 +841,7 @@ export default function BookmarkViewer() {
       ) : null}
 
       <div className="py-8 text-center">
-        {nextToken ? (
+        {nextToken?.startsWith("cache:") ? (
           <button
             type="button"
             className="rounded-md bg-white px-5 py-3 text-sm font-semibold text-ink hover:bg-slate-200 disabled:opacity-60"
@@ -744,6 +853,16 @@ export default function BookmarkViewer() {
         ) : (
           <span className="text-sm text-quiet">{loading ? "読み込み中" : "ここまでです"}</span>
         )}
+        {nextXToken ? (
+          <button
+            type="button"
+            className="ml-3 rounded-md border border-line px-5 py-3 text-sm font-semibold text-slate-100 hover:bg-panel disabled:opacity-60"
+            onClick={() => loadBookmarks("fetch-more")}
+            disabled={loading}
+          >
+            {loadingMode === "fetch-more" ? "取得中" : "続きを取得"}
+          </button>
+        ) : null}
       </div>
 
       <div ref={menuRef} className="fixed left-4 top-3 z-40 flex flex-col items-start">
@@ -952,6 +1071,40 @@ export default function BookmarkViewer() {
                   {tags.length === 0 ? <p className="text-quiet">タグがまだありません。</p> : null}
                 </div>
                 {tagError ? <p className="text-xs text-red-200">{tagError}</p> : null}
+              </div>
+            ) : null}
+
+            {activeMenu === "settings" ? (
+              <div className="space-y-4">
+                <div className="space-y-2 rounded-md border border-line bg-ink/60 p-3">
+                  <label className="block text-xs text-slate-300">
+                    X API チャージ上限（USD）
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={apiChargeLimitDraft}
+                      onChange={(event) => setApiChargeLimitDraft(Number(event.target.value))}
+                      className="mt-2 w-full rounded-md border border-line bg-panel px-3 py-2 text-sm text-slate-100 outline-none focus:border-slate-500"
+                    />
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="flex-1 rounded-md bg-white px-3 py-2 text-sm font-semibold text-ink hover:bg-slate-200 disabled:opacity-50"
+                      onClick={() => updateApiChargeLimit(apiChargeLimitDraft)}
+                    >
+                      上限を保存
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-md border border-line px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-ink"
+                      onClick={resetApiChargeLimit}
+                    >
+                      初期化
+                    </button>
+                  </div>
+                </div>
               </div>
             ) : null}
 

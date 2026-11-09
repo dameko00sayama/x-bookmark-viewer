@@ -87,6 +87,14 @@ function firstLine(text: string) {
   return text.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "";
 }
 
+function summarizeForCompactView(text: string, fallback = "") {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+  return trimmed.length > 40 ? `${trimmed.slice(0, 40).trimEnd()}…` : trimmed;
+}
+
 function getPrimaryTag(tags: BookmarkTag[]) {
   return [...tags].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id)[0] ?? null;
 }
@@ -379,6 +387,8 @@ export default function BookmarkCard({ tweet, tags, onRemove, onImageClick, onTa
   }
 
   if (collapsed) {
+    const compactSummary = summarizeForCompactView(firstLine(localTweet.text), "本文なし");
+
     return (
       <article className="rounded-lg border border-slate-800/70 bg-slate-900/45 px-5 py-4 opacity-85 transition hover:border-slate-600 hover:opacity-100">
         <div className="flex items-start gap-4">
@@ -399,17 +409,24 @@ export default function BookmarkCard({ tweet, tags, onRemove, onImageClick, onTa
                 (@{localTweet.author?.username ?? localTweet.author?.id ?? "unknown"})
               </span>
             </div>
-            <p className="mt-2 line-clamp-1 text-sm leading-6 text-slate-400">
-              {firstLine(localTweet.text) || "本文なし"}
+            <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-400">
+              {compactSummary}
             </p>
           </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800 hover:text-slate-100"
-            onClick={() => saveCollapsed(false)}
-          >
-            開く
-          </button>
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            <button
+              type="button"
+              className="rounded-md border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-800 hover:text-slate-100"
+              onClick={() => saveCollapsed(false)}
+            >
+              開く
+            </button>
+            {note.trim() ? (
+              <p className="max-w-40 text-right text-xs leading-5 text-slate-500" title={note.trim()}>
+                {summarizeForCompactView(note)}
+              </p>
+            ) : null}
+          </div>
         </div>
       </article>
     );
@@ -572,6 +589,11 @@ export default function BookmarkCard({ tweet, tags, onRemove, onImageClick, onTa
         >
           {noteOpen ? "メモを閉じる" : note.trim() ? "メモあり" : "メモ"}
         </button>
+        {!noteOpen && note.trim() ? (
+          <p className="basis-full text-right text-xs leading-5 text-slate-500" title={note.trim()}>
+            {summarizeForCompactView(note)}
+          </p>
+        ) : null}
         <button
           type="button"
           className="rounded-md border border-red-400/50 px-4 py-2 text-sm font-semibold text-red-100 transition hover:bg-red-950/50"

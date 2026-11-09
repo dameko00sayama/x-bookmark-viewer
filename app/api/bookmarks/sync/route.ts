@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   getActiveCachedBookmarkIds,
   getAuth,
+  getBookmarkNextXToken,
   getCachedBookmarkPage,
   getEstimatedApiUsageUsd,
   markBookmarksNotSeenOnX,
@@ -58,9 +59,11 @@ export async function POST() {
 
     const unbookmarkedCount = markBookmarksNotSeenOnX(seenTweetIds, targetTweetIds);
     const page = getCachedBookmarkPage(0, PAGE_SIZE);
+    const cachedNextXToken = getBookmarkNextXToken();
 
     return NextResponse.json({
       ...page,
+      nextXToken: cachedNextXToken ? `x:${encodeURIComponent(cachedNextXToken)}` : null,
       source: "x",
       syncedCount: seenTweetIds.length,
       syncTargetCount: targetTweetIds.length,

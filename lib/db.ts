@@ -558,6 +558,28 @@ export function setSetting(key: string, value: string | null) {
     .run(key, value, Date.now());
 }
 
+export function getApiChargeLimitUsd() {
+  const value = getSetting("api_charge_limit_usd");
+  const parsed = value === null ? Number(process.env.X_API_CHARGE_USD ?? "5") : Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 5;
+}
+
+export function setApiChargeLimitUsd(value: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return;
+  }
+  setSetting("api_charge_limit_usd", parsed.toString());
+}
+
+export function resetApiUsageTracking() {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare("DELETE FROM api_usage").run();
+    db.prepare("DELETE FROM api_usage_resources").run();
+  })();
+}
+
 export function getBookmarkNextXToken() {
   return getSetting(bookmarkSettingKey("bookmarks_next_x_token"));
 }
@@ -715,7 +737,7 @@ export function getCachedBookmarkPage(offset = 0, limit = 50): CachedBookmarkPag
       LEFT JOIN bookmark_view_states ON bookmark_view_states.tweet_id = cached_bookmark_tweets.tweet_id
       WHERE account_bookmarks.x_bookmarked = 1
       GROUP BY cached_bookmark_tweets.tweet_id
-      ORDER BY sort_order ASC, cached_at DESC
+      ORDER BY sort_order ASC, cached_at DESC, cached_bookmark_tweets.tweet_id ASC
       LIMIT ? OFFSET ?
     `
     )

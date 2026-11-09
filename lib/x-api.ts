@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import {
+  getApiChargeLimitUsd,
   getAuth,
   getEstimatedApiUsageUsd,
   recordApiUsageForResources,
@@ -107,8 +108,7 @@ export function createCodeChallenge(verifier: string) {
 }
 
 export function getApiChargeUsd() {
-  const value = Number(process.env.X_API_CHARGE_USD ?? "5");
-  return Number.isFinite(value) && value > 0 ? value : 5;
+  return getApiChargeLimitUsd();
 }
 
 function assertWithinApiCharge(estimatedCostUsd: number) {

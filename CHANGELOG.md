@@ -1,5 +1,33 @@
 ﻿# Changelog
 
+## v3.3.2 - 2026-11-09
+
+- Fix: Keep initial display, search, tag filters, and load-more paging within the local SQLite cache; never automatically follow X cursors.
+- Feature: Add explicit "続きを取得" for fetching the next X page, separate from local "もっと読む".
+- Fix: Stop filter preloading after a failed local page and prevent overlapping page requests.
+- Test: Add synthetic route/viewer regression checks for local pagination, filters, failures, and explicit fetch/sync actions.
+- Layout: Keep bookmark cards vertically stacked, make header information and actions responsive across two rows, and prevent the menu button from overlapping the title.
+- Chore: Bump app version to v3.3.2.
+
+## v3.3.1 - 2026-09-15
+
+- Fix: Keep memo fields collapsed while showing a subtle 40-character preview below the memo control.
+- Chore: Bump app version to v3.3.1.
+
+## v3.3.0 - 2026-09-14
+
+- Feature: Display a compact memo summary even for collapsed bookmark cards.
+- Feature: Auto-load additional pages when a search or tag filter is active so full matching results remain visible.
+- Feature: Allow resetting and configuring the X API charge limit from settings, and reset usage tracking from the UI.
+- Chore: Bump app version to v3.3.0.
+
+## v3.2.0 - 2026-08-09
+
+- Fix: Prevent "load more" results from adding a bookmark already shown in the integrated timeline.
+- Fix: Keep X API continuation paging on the X cursor instead of jumping back into an already-read cache offset.
+- Fix: Add tweet id as a stable tie-breaker for cached bookmark pagination.
+- Chore: Bump app version to v3.2.0.
+
 ## v3.1.0 - 2026-06-24
 
 - Feature: Export all cached bookmarks, including unbookmarked records, from one UI action.
@@ -124,5 +152,3 @@
 
 Notes:
 - These changes were committed locally. They have not been pushed to GitHub.
-
-
