@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import {
   getActiveCachedBookmarkIds,
-  getAuth,
   getBookmarkNextXToken,
   getCachedBookmarkPage,
   getEstimatedApiUsageUsd,
@@ -9,6 +8,7 @@ import {
   saveSyncedBookmarkPage
 } from "@/lib/db";
 import { AuthRequiredError, BudgetExceededError, fetchBookmarks, getApiChargeUsd, XApiError } from "@/lib/x-api";
+import { hasAppSession, isSameOriginRequest } from "@/lib/session";
 
 const PAGE_SIZE = 50;
 
@@ -30,9 +30,9 @@ function toErrorResponse(error: unknown) {
   return NextResponse.json({ error: "BOOKMARK_SYNC_FAILED" }, { status: 500 });
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
-    if (!getAuth()) {
+    if (!(await hasAppSession()) || !isSameOriginRequest(request)) {
       throw new AuthRequiredError();
     }
 

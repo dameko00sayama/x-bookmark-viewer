@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
-import { clearAuth } from "@/lib/db";
+import { clearAppSessionCookie, isSameOriginRequest } from "@/lib/session";
 
-export async function POST() {
-  clearAuth();
+export async function POST(request: Request) {
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "INVALID_ORIGIN" }, { status: 403 });
+  }
+  await clearAppSessionCookie();
   return NextResponse.json({ ok: true });
 }

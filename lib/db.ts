@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "crypto";
 import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
@@ -28,6 +29,7 @@ export type StoredOAuthState = {
 
 const dataDir = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
 const dbPath = path.join(dataDir, "app.sqlite");
+export const MAX_API_CHARGE_LIMIT_USD = 100;
 
 let db: Database.Database | null = null;
 
@@ -76,6 +78,14 @@ function getDb() {
         verifier TEXT NOT NULL,
         expires_at INTEGER NOT NULL,
         created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS app_sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES accounts(user_id) ON DELETE CASCADE
       );
 
       CREATE TABLE IF NOT EXISTS cached_bookmark_tweets (
@@ -326,9 +336,48 @@ export function clearAuth() {
   const db = getDb();
 
   db.transaction(() => {
+    db.prepare("DELETE FROM app_sessions").run();
     db.prepare("DELETE FROM accounts").run();
     db.prepare("DELETE FROM auth WHERE id = 'default'").run();
   })();
+}
+
+const APP_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+function hashAppSessionToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+export function createAppSession(userId: string) {
+  const token = randomBytes(32).toString("base64url");
+  const now = Date.now();
+  getDb()
+    .prepare("INSERT INTO app_sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)")
+    .run(hashAppSessionToken(token), userId, now + APP_SESSION_MAX_AGE_MS, now);
+  return token;
+}
+
+export function getAppSessionUserId(token: string | null) {
+  if (!token) {
+    return null;
+  }
+  const row = getDb()
+    .prepare(
+      `
+      SELECT app_sessions.user_id
+      FROM app_sessions
+      INNER JOIN accounts ON accounts.user_id = app_sessions.user_id
+      WHERE app_sessions.token_hash = ? AND app_sessions.expires_at > ?
+    `
+    )
+    .get(hashAppSessionToken(token), Date.now()) as { user_id: string } | undefined;
+  return row?.user_id ?? null;
+}
+
+export function revokeAppSession(token: string | null) {
+  if (token) {
+    getDb().prepare("DELETE FROM app_sessions WHERE token_hash = ?").run(hashAppSessionToken(token));
+  }
 }
 
 export function getAccounts(): StoredAccount[] {
@@ -350,20 +399,33 @@ export function getAccounts(): StoredAccount[] {
   }));
 }
 
-export function setActiveAccount(userId: string) {
+export function setActiveAccount(userId: string, sessionToken: string | null) {
   const db = getDb();
-  const account = db.prepare("SELECT user_id FROM accounts WHERE user_id = ?").get(userId) as
-    | { user_id: string }
-    | undefined;
+  const now = Date.now();
+  const switchAccount = db.transaction(() => {
+    const account = db.prepare("SELECT user_id FROM accounts WHERE user_id = ?").get(userId) as
+      | { user_id: string }
+      | undefined;
+    if (!account) {
+      throw new Error("ACCOUNT_NOT_FOUND");
+    }
 
-  if (!account) {
-    throw new Error("ACCOUNT_NOT_FOUND");
-  }
+    if (!sessionToken) {
+      throw new Error("AUTH_REQUIRED");
+    }
+    const sessionHash = hashAppSessionToken(sessionToken);
+    const session = db
+      .prepare("SELECT token_hash FROM app_sessions WHERE token_hash = ? AND expires_at > ?")
+      .get(sessionHash, now);
+    if (!session) {
+      throw new Error("AUTH_REQUIRED");
+    }
 
-  db.transaction(() => {
     db.prepare("UPDATE accounts SET active = CASE WHEN user_id = ? THEN 1 ELSE 0 END").run(userId);
     db.prepare("UPDATE auth SET user_id = ? WHERE id = 'default'").run(userId);
-  })();
+    db.prepare("UPDATE app_sessions SET user_id = ? WHERE token_hash = ?").run(userId, sessionHash);
+  });
+  switchAccount();
 }
 
 export function saveOAuthState(state: string, verifier: string) {
@@ -561,23 +623,19 @@ export function setSetting(key: string, value: string | null) {
 export function getApiChargeLimitUsd() {
   const value = getSetting("api_charge_limit_usd");
   const parsed = value === null ? Number(process.env.X_API_CHARGE_USD ?? "5") : Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 5;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, MAX_API_CHARGE_LIMIT_USD) : 5;
 }
 
 export function setApiChargeLimitUsd(value: number) {
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return;
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > MAX_API_CHARGE_LIMIT_USD) {
+    throw new Error("INVALID_API_CHARGE_USD");
   }
   setSetting("api_charge_limit_usd", parsed.toString());
 }
 
 export function resetApiUsageTracking() {
-  const db = getDb();
-  db.transaction(() => {
-    db.prepare("DELETE FROM api_usage").run();
-    db.prepare("DELETE FROM api_usage_resources").run();
-  })();
+  setSetting("api_usage_reset_at", Date.now().toString());
 }
 
 export function getBookmarkNextXToken() {
@@ -1301,9 +1359,10 @@ export function recordApiUsageForResources(operation: string, resourceIds: strin
 }
 
 export function getEstimatedApiUsageUsd() {
+  const resetAt = Number(getSetting("api_usage_reset_at") ?? "0");
   const row = getDb()
-    .prepare("SELECT COALESCE(SUM(estimated_cost_usd), 0) AS cost FROM api_usage")
-    .get() as { cost: number };
+    .prepare("SELECT COALESCE(SUM(estimated_cost_usd), 0) AS cost FROM api_usage WHERE occurred_at > ?")
+    .get(Number.isFinite(resetAt) ? resetAt : 0) as { cost: number };
   const offset = Number(process.env.X_API_USAGE_OFFSET_USD ?? "1.039");
   return row.cost + (Number.isFinite(offset) && offset >= 0 ? offset : 1.039);
 }

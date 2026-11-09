@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { markBookmarkXState } from "@/lib/db";
 import { addBookmark, AuthRequiredError, removeBookmark, XApiError } from "@/lib/x-api";
+import { hasAppSession, isSameOriginRequest } from "@/lib/session";
 
 type Context = {
   params: Promise<{ tweetId: string }>;
@@ -21,6 +22,10 @@ function toErrorResponse(error: unknown) {
 }
 
 export async function DELETE(_request: NextRequest, context: Context) {
+  if (!(await hasAppSession()) || !isSameOriginRequest(_request)) {
+    return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+  }
+
   const { tweetId } = await context.params;
 
   try {
@@ -33,6 +38,10 @@ export async function DELETE(_request: NextRequest, context: Context) {
 }
 
 export async function POST(_request: NextRequest, context: Context) {
+  if (!(await hasAppSession()) || !isSameOriginRequest(_request)) {
+    return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+  }
+
   const { tweetId } = await context.params;
 
   try {

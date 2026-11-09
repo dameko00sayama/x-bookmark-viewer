@@ -1082,6 +1082,7 @@ export default function BookmarkViewer() {
                     <input
                       type="number"
                       min="0.01"
+                      max="100"
                       step="0.01"
                       value={apiChargeLimitDraft}
                       onChange={(event) => setApiChargeLimitDraft(Number(event.target.value))}

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuth, saveBookmarkCollapsed } from "@/lib/db";
+import { saveBookmarkCollapsed } from "@/lib/db";
+import { hasAppSession, isSameOriginRequest } from "@/lib/session";
 
 type Context = {
   params: Promise<{ tweetId: string }>;
 };
 
 export async function PUT(request: NextRequest, context: Context) {
-  if (!getAuth()) {
+  if (!(await hasAppSession()) || !isSameOriginRequest(request)) {
     return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
   }
 

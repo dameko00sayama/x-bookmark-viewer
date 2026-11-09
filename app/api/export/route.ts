@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { getAuth } from "@/lib/db";
 import { createBookmarkExportArchive } from "@/lib/export-archive";
+import { getAppSessionUser, isSameOriginRequest } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  if (!getAuth()) {
+export async function GET(request: Request) {
+  if (!(await getAppSessionUser()) || !isSameOriginRequest(request)) {
     return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
   }
 

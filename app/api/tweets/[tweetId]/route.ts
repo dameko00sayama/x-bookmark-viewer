@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveCachedTweet } from "@/lib/db";
 import { AuthRequiredError, BudgetExceededError, XApiError, fetchTweet } from "@/lib/x-api";
+import { hasAppSession, isSameOriginRequest } from "@/lib/session";
 
 type Context = {
   params: Promise<{ tweetId: string }>;
 };
 
 export async function GET(_request: NextRequest, context: Context) {
+  if (!(await hasAppSession()) || !isSameOriginRequest(_request)) {
+    return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+  }
+
   const { tweetId } = await context.params;
   const url = new URL(_request.url);
   const expand = url.searchParams.get("expand");

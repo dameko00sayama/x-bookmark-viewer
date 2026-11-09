@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteTag, getAuth, updateTag } from "@/lib/db";
+import { deleteTag, updateTag } from "@/lib/db";
+import { hasAppSession, isSameOriginRequest } from "@/lib/session";
 
 type Context = {
   params: Promise<{ tagId: string }>;
@@ -15,7 +16,7 @@ function sanitizeColor(value: unknown) {
 }
 
 export async function PUT(request: NextRequest, context: Context) {
-  if (!getAuth()) {
+  if (!(await hasAppSession()) || !isSameOriginRequest(request)) {
     return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
   }
 
@@ -40,8 +41,8 @@ export async function PUT(request: NextRequest, context: Context) {
   }
 }
 
-export async function DELETE(_request: NextRequest, context: Context) {
-  if (!getAuth()) {
+export async function DELETE(request: NextRequest, context: Context) {
+  if (!(await hasAppSession()) || !isSameOriginRequest(request)) {
     return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
   }
 

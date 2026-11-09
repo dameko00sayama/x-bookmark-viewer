@@ -8,7 +8,10 @@ function tweetUrl(tweet: { id: string; author: { username: string } | null }) {
 }
 
 function csvCell(value: unknown) {
-  const text = value === null || value === undefined ? "" : String(value);
+  let text = value === null || value === undefined ? "" : String(value);
+  if (/^[\s\u0000-\u001f\u007f]*[=+\-@]/.test(text)) {
+    text = `'${text}`;
+  }
   return `"${text.replaceAll('"', '""')}"`;
 }
 

@@ -1,5 +1,20 @@
 ﻿# Changelog
 
+## v4.0.0 - 2026-11-09
+
+> Upgrade note: Existing browser sessions must sign in again with X OAuth. Saved accounts and bookmarks are retained.
+
+- Security: Require browser-bound app sessions for protected APIs and bind OAuth state/PKCE verification to the initiating browser.
+- Security: Require same-origin validation for state-changing requests, including requests accessed through an alternate local host name.
+- Security: Restrict Docker's published port to loopback and require an explicit token-encryption key.
+- Security: Protect bookmark exports and API budget settings; neutralize spreadsheet formula prefixes in CSV exports.
+- Fix: Keep the active account and browser session account in sync when switching accounts.
+- Feature: Add browser-session reconnection without deleting saved X accounts or local bookmarks.
+- Fix: Preserve API usage records when resetting the displayed usage period and enforce a server-side $100 charge cap.
+- Chore: Update vulnerable production dependencies and add authentication/origin regression checks.
+- Docs: Record authentication, origin-validation, and recovery principles in the development and operations guides.
+- Chore: Bump app version to v4.0.0.
+
 ## v3.3.2 - 2026-11-09
 
 - Fix: Keep initial display, search, tag filters, and load-more paging within the local SQLite cache; never automatically follow X cursors.

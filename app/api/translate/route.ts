@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { hasAppSession, isSameOriginRequest } from "@/lib/session";
 
 export async function POST(request: NextRequest) {
+  if (!(await hasAppSession()) || !isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+  }
+
   if (process.env.ENABLE_EXTERNAL_TRANSLATION !== "1") {
     return NextResponse.json({ error: "EXTERNAL_TRANSLATION_DISABLED" }, { status: 403 });
   }

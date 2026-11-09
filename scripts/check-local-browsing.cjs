@@ -32,6 +32,7 @@ const db = {
   },
   saveCachedBookmarkPage: (items, offset) => { savedOffsets.push(offset); return items; }
 };
+let sessionAuthorized = true;
 class AuthRequiredError extends Error {}
 class BudgetExceededError extends Error {}
 class XApiError extends Error {}
@@ -40,8 +41,38 @@ const xApi = {
   fetchBookmarks: async token => { xCalls.push(token); return { items: tweets.slice(0, 50), nextToken: 'remote next' }; }
 };
 const next = { NextResponse: { json: (body, opts) => ({ body, status: opts?.status ?? 200 }) } };
-const route = load('app/api/bookmarks/route.ts', { 'next/server': next, '@/lib/db': db, '@/lib/x-api': xApi });
-async function get(query = '') { return route.GET({ url: 'http://localhost:8181/api/bookmarks' + query }); }
+const sessionModule = load('lib/session.ts', {
+  'next/headers': { cookies: async () => ({ get: () => undefined, set() {}, delete() {} }) },
+  crypto: { randomBytes: () => ({ toString: () => 'test' }) },
+  './db': {
+    createAppSession: () => 'test',
+    getAppSessionUserId: () => null,
+    revokeAppSession() {},
+    setActiveAccount() {}
+  }
+});
+assert.equal(sessionModule.isSameOriginRequest(new Request('http://localhost:8181/api/test', {
+  headers: { origin: 'http://localhost:8181', host: 'localhost:8181' }
+})), true);
+assert.equal(sessionModule.isSameOriginRequest(new Request('http://localhost:8181/api/test', {
+  headers: { origin: 'http://127.0.0.1:8181', host: '127.0.0.1:8181' }
+})), true, 'Request host alias should match the browser Origin');
+assert.equal(sessionModule.isSameOriginRequest(new Request('http://localhost:8181/api/test', {
+  headers: { origin: 'https://attacker.example', host: 'localhost:8181' }
+})), false);
+console.log('PASS origin check: browser Origin validated against request URL and Host');
+const route = load('app/api/bookmarks/route.ts', {
+  'next/server': next, '@/lib/db': db, '@/lib/x-api': xApi,
+  '@/lib/session': {
+    hasAppSession: async () => sessionAuthorized,
+    isSameOriginRequest: request => new URL(request.url).origin === request.headers.get('origin')
+  }
+});
+async function get(query = '') {
+  return route.GET(new Request('http://localhost:8181/api/bookmarks' + query, {
+    headers: { origin: 'http://localhost:8181' }
+  }));
+}
 function renderer() {
   const slots = []; let cursor = 0, dirty = true, effects = [], tree;
   const equal = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
@@ -98,6 +129,43 @@ function renderer() {
   return { settle, nodes, button, requests };
 }
 (async () => {
+  const exportModule = load('lib/export-archive.ts', {
+    '@/package.json': { default: { version: 'test' } },
+    './db': {
+      getBookmarkExportData: () => [{
+        id: '123',
+        author: null,
+        accounts: [],
+        tags: [{ name: '-CMD()' }],
+        media: [],
+        text: ' \t=1+1',
+        note: '\r@SUM(1,1)',
+        quotedTweet: { id: '456', text: '+1+1' },
+        bookmarked: true,
+        createdAt: null,
+        noteUpdatedAt: null,
+        cachedAt: null,
+        updatedAt: null
+      }]
+    }
+  }, { TextEncoder });
+  const archiveText = Buffer.from(exportModule.createBookmarkExportArchive().bytes).toString('utf8');
+  assert.ok(archiveText.includes(`"' \t=1+1"`), 'CSV text formula prefix was not neutralized');
+  assert.ok(archiveText.includes(`"'\r@SUM(1,1)"`), 'CSV note formula prefix was not neutralized');
+  assert.ok(archiveText.includes(`"'-CMD()"`), 'CSV tag formula prefix was not neutralized');
+  assert.ok(archiveText.includes(`"'+1+1"`), 'CSV quoted text formula prefix was not neutralized');
+  console.log('PASS export: spreadsheet formula prefixes are neutralized');
+
+  sessionAuthorized = false;
+  assert.equal((await get()).status, 401, 'Bookmarks API accepted a request without an app session');
+  assert.equal(xCalls.length, 0, 'Unauthorized request called X');
+  sessionAuthorized = true;
+  console.log('PASS route: unauthenticated access rejected before X calls');
+  assert.equal((await route.GET(new Request('http://localhost:8181/api/bookmarks', {
+    headers: { origin: 'https://attacker.example' }
+  }))).status, 401, 'Bookmarks API accepted a cross-origin request');
+  console.log('PASS route: cross-origin requests rejected');
+
   for (const query of ['', '?pagination_token=cache:50', '?pagination_token=cache:100']) {
     const r = await get(query); assert.equal(r.status, 200); assert.equal(r.body.source, 'cache');
     assert.ok(r.body.nextToken === null || r.body.nextToken.startsWith('cache:'));
@@ -148,11 +216,78 @@ function renderer() {
   failCache = false;
   const syncRoute = load('app/api/bookmarks/sync/route.ts', {
     'next/server': next, '@/lib/x-api': xApi,
+    '@/lib/session': {
+      hasAppSession: async () => true,
+      isSameOriginRequest: () => true
+    },
     '@/lib/db': { ...db, getActiveCachedBookmarkIds: () => ['0'], saveSyncedBookmarkPage() {}, markBookmarksNotSeenOnX: () => 0 }
   });
-  const synced = await syncRoute.POST();
+  const synced = await syncRoute.POST(new Request('http://localhost:8181/api/bookmarks/sync'));
   assert.equal(synced.status, 200); assert.equal(xCalls.length, 1);
   assert.equal(synced.body.nextToken, 'cache:50'); assert.ok(synced.body.nextXToken.startsWith('x:'));
+  let settingsAuthorized = false, settingsLimit = 5, resets = 0;
+  const settingsRoute = load('app/api/settings/route.ts', {
+    'next/server': next,
+    '@/lib/db': {
+      MAX_API_CHARGE_LIMIT_USD: 100,
+      getApiChargeLimitUsd: () => settingsLimit,
+      getEstimatedApiUsageUsd: () => 0,
+      setApiChargeLimitUsd: value => { settingsLimit = value; },
+      resetApiUsageTracking: () => { resets++; }
+    },
+    '@/lib/session': {
+      getAppSessionUser: async () => settingsAuthorized ? 'test' : null,
+      isSameOriginRequest: request => new URL(request.url).origin === request.headers.get('origin')
+    }
+  });
+  assert.equal((await settingsRoute.GET(new Request('http://localhost:8181/api/settings', {
+    headers: { origin: 'http://localhost:8181' }
+  }))).status, 401);
+  settingsAuthorized = true;
+  const postSettings = (body, origin = 'http://localhost:8181') => settingsRoute.POST(new Request('http://localhost:8181/api/settings', {
+    method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(body)
+  }));
+  assert.equal((await postSettings({ action: 'reset' }, 'https://attacker.example')).status, 401);
+  assert.equal(resets, 0, 'Cross-origin settings request triggered a reset');
+  assert.equal((await postSettings({ action: 'set-limit', apiChargeUsd: 101 })).status, 400);
+  assert.equal(settingsLimit, 5, 'Over-limit setting was accepted');
+  assert.equal((await postSettings({ action: 'reset' })).status, 200);
+  assert.equal(resets, 1);
+  assert.equal((await postSettings({ action: 'set-limit', apiChargeUsd: 100 })).status, 200);
+  assert.equal(settingsLimit, 100);
+  console.log('PASS settings: session/origin checks, reset, and server-enforced charge cap');
+  let activeAccount = 'account-a', sessionAccount = 'account-a', activeRouteAuthorized = true;
+  const activeRoute = load('app/api/auth/accounts/[userId]/active/route.ts', {
+    'next/server': next,
+    '@/lib/session': {
+      hasAppSession: async () => activeRouteAuthorized,
+      isSameOriginRequest: request => new URL(request.url).origin === request.headers.get('origin'),
+      setActiveAccountForSession: async userId => {
+        activeAccount = userId;
+        sessionAccount = userId;
+      }
+    }
+  });
+  const switchAccount = userId => activeRoute.POST(
+    new Request('http://localhost:8181/api/auth/accounts/' + userId + '/active', {
+      method: 'POST', headers: { origin: 'http://localhost:8181' }
+    }),
+    { params: Promise.resolve({ userId }) }
+  );
+  const crossOriginSwitch = await activeRoute.POST(
+    new Request('http://localhost:8181/api/auth/accounts/account-b/active', {
+      method: 'POST', headers: { origin: 'https://attacker.example' }
+    }),
+    { params: Promise.resolve({ userId: 'account-b' }) }
+  );
+  assert.equal(crossOriginSwitch.status, 403);
+  assert.equal(activeAccount, 'account-a', 'Cross-origin request changed the active account');
+  assert.equal((await switchAccount('account-b')).status, 200);
+  assert.equal(activeAccount, 'account-b');
+  assert.equal(sessionAccount, 'account-b', 'Session was not rebound to the selected account');
+  activeRouteAuthorized = false;
+  assert.equal((await switchAccount('account-a')).status, 401);
+  console.log('PASS account switch: active account and browser session stay aligned');
   console.log('PASS local page failure: no request loop or X fallback');
   console.log('PASS explicit sync: X call retained, local pagination remains separate');
   console.log('PASS route: cache boundary, legacy X-token rejection, latest and continuation acquisition');

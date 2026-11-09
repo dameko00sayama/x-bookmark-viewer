@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createTag, getAuth, getTags } from "@/lib/db";
+import { createTag, getTags } from "@/lib/db";
+import { hasAppSession, isSameOriginRequest } from "@/lib/session";
 
 function sanitizeColor(value: unknown) {
   return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value) ? value : "#38bdf8";
 }
 
 export async function GET() {
-  if (!getAuth()) {
+  if (!(await hasAppSession())) {
     return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
   }
 
@@ -14,7 +15,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  if (!getAuth()) {
+  if (!(await hasAppSession()) || !isSameOriginRequest(request)) {
     return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
   }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { saveOAuthState } from "@/lib/db";
 import { buildAuthorizationUrl, createCodeChallenge } from "@/lib/x-api";
-import { randomBase64Url } from "@/lib/session";
+import { PKCE_COOKIE, randomBase64Url, setAuthCookie, STATE_COOKIE } from "@/lib/session";
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,6 +11,8 @@ export async function GET(request: NextRequest) {
     const url = buildAuthorizationUrl(state, createCodeChallenge(verifier), origin);
 
     saveOAuthState(state, verifier);
+    await setAuthCookie(STATE_COOKIE, state);
+    await setAuthCookie(PKCE_COOKIE, verifier);
 
     return NextResponse.redirect(url);
   } catch {

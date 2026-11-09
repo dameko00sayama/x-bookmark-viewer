@@ -52,14 +52,42 @@ export default function AuthAccountsPage() {
     }
   }
 
-  async function logoutAll() {
-    const ok = window.confirm("Remove all locally saved X account tokens from this test environment?");
+  async function logoutBrowserSession() {
+    const ok = window.confirm("End this browser session? Saved X accounts and bookmarks will be kept.");
     if (!ok) {
       return;
     }
 
-    await fetch("/api/auth/logout", { method: "POST" });
-    await loadAuth();
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error ?? `Could not end the browser session (HTTP ${response.status}).`);
+      }
+      await loadAuth();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not end the browser session.");
+    }
+  }
+
+  async function relinkBrowserSession() {
+    const ok = window.confirm(
+      "Reconnect this browser session with X? Your saved X accounts and bookmarks will be kept."
+    );
+    if (!ok) {
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error ?? `Could not clear the current browser session (HTTP ${response.status}).`);
+      }
+      window.location.assign("/api/auth/login");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not reconnect the browser session.");
+    }
   }
 
   async function setActiveAccount(userId: string) {
@@ -70,7 +98,7 @@ export default function AuthAccountsPage() {
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.error ?? "ACCOUNT_SWITCH_FAILED");
+        throw new Error(payload.error ?? `ACCOUNT_SWITCH_FAILED (HTTP ${response.status})`);
       }
       await loadAuth();
     } catch (caught) {
@@ -163,6 +191,13 @@ export default function AuthAccountsPage() {
       </section>
 
       <div className="mt-6 flex flex-wrap gap-3">
+        <button
+          type="button"
+          className="rounded-md border border-sky-400/50 px-5 py-3 text-sm font-semibold text-sky-100 transition hover:bg-sky-950/40"
+          onClick={relinkBrowserSession}
+        >
+          Reconnect browser session
+        </button>
         <a
           href="/"
           className={`rounded-md px-5 py-3 text-sm font-semibold transition ${
@@ -180,10 +215,10 @@ export default function AuthAccountsPage() {
         {accounts.length > 0 ? (
           <button
             type="button"
-            className="rounded-md border border-red-400/50 px-5 py-3 text-sm font-semibold text-red-100 transition hover:bg-red-950/50"
-            onClick={logoutAll}
+            className="rounded-md border border-line px-5 py-3 text-sm font-semibold text-slate-300 transition hover:bg-panel"
+            onClick={logoutBrowserSession}
           >
-            Remove local tokens
+            End browser session
           </button>
         ) : null}
       </div>

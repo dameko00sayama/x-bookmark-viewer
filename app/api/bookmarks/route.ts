@@ -3,11 +3,11 @@ import {
   getActiveCachedBookmarkCount,
   getBookmarkNextXToken,
   getCachedBookmarkPage,
-  getAuth,
   getEstimatedApiUsageUsd,
   saveCachedBookmarkPage
 } from "@/lib/db";
 import { AuthRequiredError, BudgetExceededError, fetchBookmarks, getApiChargeUsd, XApiError } from "@/lib/x-api";
+import { hasAppSession, isSameOriginRequest } from "@/lib/session";
 
 const PAGE_SIZE = 50;
 
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
   const refresh = params.get("refresh") === "1";
 
   try {
-    if (!getAuth()) {
+    if (!(await hasAppSession()) || !isSameOriginRequest(request)) {
       throw new AuthRequiredError();
     }
 
